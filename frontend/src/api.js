@@ -1,4 +1,6 @@
-const BASE = "http://127.0.0.1:8000";
+// Set VITE_API_BASE at build time (e.g. Vercel project env vars) to point a
+// deployed frontend at a deployed backend; falls back to local dev default.
+const BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
 async function asJson(res) {
   if (!res.ok) {

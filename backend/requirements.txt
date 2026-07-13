@@ -4,4 +4,5 @@ networkx==3.6.1
 osmnx==2.1.0
 pydantic==2.13.4
 pydantic_core==2.46.4
+requests==2.34.2
 uvicorn==0.51.0
