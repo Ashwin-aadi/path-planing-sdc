@@ -1,5 +1,27 @@
 const EMERGENCY_PRESET = { speed: 0, time: 60, safety: 40 };
 
+// Keeps the three weights summing to 100: the slider being dragged takes
+// (or gives back) share proportionally from/to the other two, preserving
+// their relative ratio to each other.
+function rebalanceWeights(weights, changedKey, rawValue) {
+  const newValue = Math.max(0, Math.min(100, rawValue));
+  const otherKeys = Object.keys(weights).filter((k) => k !== changedKey);
+  const otherSum = otherKeys.reduce((s, k) => s + weights[k], 0);
+  const remaining = 100 - newValue;
+
+  const next = { ...weights, [changedKey]: newValue };
+  if (otherSum > 0) {
+    otherKeys.forEach((k) => {
+      next[k] = (weights[k] / otherSum) * remaining;
+    });
+  } else {
+    otherKeys.forEach((k) => {
+      next[k] = remaining / otherKeys.length;
+    });
+  }
+  return next;
+}
+
 function Slider({ label, value, onChange, pct, disabled }) {
   return (
     <div className="slider-row">
@@ -35,8 +57,8 @@ export default function ControlPanel({
   onRemoveDestination,
 }) {
   const shown = emergency ? EMERGENCY_PRESET : weights;
-  const sum = shown.speed + shown.time + shown.safety || 1;
-  const pct = (v) => Math.round((v / sum) * 100);
+  const pct = (v) => Math.round(v);
+  const handleWeightChange = (key, v) => setWeights((w) => rebalanceWeights(w, key, v));
 
   return (
     <div className="panel">
@@ -75,21 +97,21 @@ export default function ControlPanel({
           value={weights.speed}
           pct={pct(shown.speed)}
           disabled={emergency}
-          onChange={(v) => setWeights((w) => ({ ...w, speed: v }))}
+          onChange={(v) => handleWeightChange("speed", v)}
         />
         <Slider
           label="Time (minimize ETA)"
           value={weights.time}
           pct={pct(shown.time)}
           disabled={emergency}
-          onChange={(v) => setWeights((w) => ({ ...w, time: v }))}
+          onChange={(v) => handleWeightChange("time", v)}
         />
         <Slider
           label="Safety (broad roads, avoid highways)"
           value={weights.safety}
           pct={pct(shown.safety)}
           disabled={emergency}
-          onChange={(v) => setWeights((w) => ({ ...w, safety: v }))}
+          onChange={(v) => handleWeightChange("safety", v)}
         />
       </section>
 
