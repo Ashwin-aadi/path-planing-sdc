@@ -45,6 +45,7 @@ function App() {
   const debounceRef = useRef(null);
   const animFrameRef = useRef(null);
   const simRef = useRef(null);
+  const rerouteSeqRef = useRef(0);
 
   useEffect(() => {
     getBounds().then((b) => {
@@ -191,6 +192,7 @@ function App() {
     const s = simRef.current;
     if (!s || !running) return;
 
+    const mySeq = ++rerouteSeqRef.current;
     const elapsed = s.startTime !== null ? performance.now() - s.startTime : 0;
     const targetDist = Math.min(1, elapsed / s.durationMs) * s.total;
     const currentPos = pointAtDistance(s.path, s.cumDist, targetDist);
@@ -208,10 +210,12 @@ function App() {
         weights: effectiveWeights,
         emergency,
       });
+      if (rerouteSeqRef.current !== mySeq) return; // superseded by a newer reroute
       setRouteData(data);
       setDestinations(remaining);
       startSimFromRoute(data, remaining, currentPos);
     } catch (err) {
+      if (rerouteSeqRef.current !== mySeq) return;
       setRouteError(err.message);
       setDestinations(remaining);
       setMockLocation(currentPos);
@@ -219,7 +223,7 @@ function App() {
       setRunning(false);
       simRef.current = null;
     } finally {
-      setRouteLoading(false);
+      if (rerouteSeqRef.current === mySeq) setRouteLoading(false);
     }
   }
 
