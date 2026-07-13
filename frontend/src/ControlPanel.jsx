@@ -1,6 +1,56 @@
-import { SPEED_OPTIONS } from "./constants";
+import { useEffect, useState } from "react";
+import { SPEED_OPTIONS, MAX_SPEED } from "./constants";
 
 const EMERGENCY_PRESET = { speed: 0, time: 60, safety: 40 };
+
+// Log-scale mapping so the slider gives usable resolution across the whole
+// 1-1000x range instead of cramming 1-50x into the first few percent.
+function speedToSlider(speed) {
+  return Math.round((Math.log(speed) / Math.log(MAX_SPEED)) * 1000);
+}
+function sliderToSpeed(pos) {
+  return Math.max(1, Math.round(Math.pow(MAX_SPEED, pos / 1000)));
+}
+
+function SpeedControl({ value, onChange }) {
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
+  const commit = () => {
+    const n = Math.max(1, Math.min(MAX_SPEED, Math.round(Number(text)) || 1));
+    setText(String(n));
+    if (n !== value) onChange(n);
+  };
+
+  return (
+    <div className="speed-custom">
+      <input
+        type="range"
+        min={0}
+        max={1000}
+        value={speedToSlider(value)}
+        onChange={(e) => onChange(sliderToSpeed(Number(e.target.value)))}
+      />
+      <div className="speed-custom-input">
+        <input
+          type="number"
+          min={1}
+          max={MAX_SPEED}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+          }}
+        />
+        <span>×</span>
+      </div>
+    </div>
+  );
+}
 
 // Keeps the three weights summing to 100: the slider being dragged takes
 // (or gives back) share proportionally from/to the other two, preserving
@@ -194,7 +244,8 @@ export default function ControlPanel({
             </button>
           ))}
         </div>
-        <p className="hint">Playback speed{running ? " — adjusts the current drive live" : ""}.</p>
+        <SpeedControl value={speedMultiplier} onChange={onSetSpeed} />
+        <p className="hint">Playback speed, up to 1000×{running ? " — adjusts the current drive live" : ""}.</p>
       </section>
 
       <section>

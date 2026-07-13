@@ -214,6 +214,34 @@
   color: white;
 }
 
+.speed-custom {
+  margin-top: 10px;
+}
+
+.speed-custom input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.speed-custom-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 12.5px;
+}
+
+.speed-custom-input input[type="number"] {
+  width: 70px;
+  padding: 4px 6px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+}
+
 .obstacle-icon {
   width: 18px;
   height: 18px;
