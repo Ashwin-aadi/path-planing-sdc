@@ -7,7 +7,7 @@ from app import config, state
 from app.astar import NoRouteFound, astar_route
 from app.graph_loader import (
     dedup_edge_pairs, edge_latlon_coords, edges_in_bbox, get_graph, graph_bounds,
-    nearest_edge, nearest_node, nearest_region, region_graphml_ready,
+    nearest_edge, nearest_node, nearest_region, region_cache_ready,
 )
 from app.geocode import search as geocode_search
 from app.models import BlockRequest, LatLon, RouteRequest, RouteResponse, SetBlockRequest, Weights
@@ -50,7 +50,7 @@ def regions():
                 "label": r["label"],
                 "center": {"lat": r["center_lat"], "lon": r["center_lon"]},
                 "radius_m": r["radius_m"],
-                "ready": region_graphml_ready(region_id),
+                "ready": region_cache_ready(region_id),
             }
             for region_id, r in config.REGIONS.items()
         ],
@@ -133,7 +133,7 @@ def nearest_region_lookup(lat: float, lon: float):
         "label": r["label"],
         "dist_to_center_m": round(dist_m, 1),
         "within_coverage": dist_m <= r["radius_m"],
-        "ready": region_graphml_ready(region_id),
+        "ready": region_cache_ready(region_id),
     }
 
 

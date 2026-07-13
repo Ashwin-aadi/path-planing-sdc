@@ -11,14 +11,14 @@ REGIONS = {
         "center_lat": 25.4926,
         "center_lon": 81.8662,
         "radius_m": 20000,
-        "graphml_path": "./osm_cache/mnnit_area.graphml",
+        "cache_path": "./osm_cache/mnnit_area.pkl",
     },
     "gwalior": {
         "label": "Gwalior",
         "center_lat": 26.2183,
         "center_lon": 78.1828,
         "radius_m": 20000,
-        "graphml_path": "./osm_cache/gwalior_area.graphml",
+        "cache_path": "./osm_cache/gwalior_area.pkl",
     },
 }
 DEFAULT_REGION = "prayagraj"

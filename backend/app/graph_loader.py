@@ -3,6 +3,7 @@ precomputes per-edge cost components so route requests don't have to."""
 
 import math
 import os
+import pickle
 
 import networkx as nx
 import osmnx as ox
@@ -51,13 +52,6 @@ def _prune_to_largest_scc(G):
     return G.subgraph(largest).copy()
 
 
-_EDGE_FLOAT_ATTRS = (
-    "length", "speed_kph", "travel_time_s", "speed_cost_s", "safety_cost_s",
-    "safety_penalty", "floor_s", "grade", "economy_cost_s",
-    "traffic_susceptibility", "traffic_base_s",
-)
-
-
 def _add_elevation(G):
     """Fetch elevation for every node (Open-Elevation, free/no key) and
     store it as a node attribute. Falls back to flat terrain (elevation=0
@@ -77,10 +71,10 @@ def _add_elevation(G):
     return G
 
 
-def region_graphml_ready(region_id):
+def region_cache_ready(region_id):
     """Cheap on-disk check (no load) — lets /api/regions warn the frontend
     before it triggers a slow first-time OSM download + elevation fetch."""
-    return os.path.exists(config.REGIONS[region_id]["graphml_path"])
+    return os.path.exists(config.REGIONS[region_id]["cache_path"])
 
 
 def _build_graph(region_id):
@@ -89,21 +83,15 @@ def _build_graph(region_id):
     ox.settings.use_cache = True
     ox.settings.cache_folder = config.CACHE_DIR
 
-    graphml_path = region["graphml_path"]
-    if os.path.exists(graphml_path):
-        G = ox.load_graphml(graphml_path)
-        # graphml round-trips numeric attrs as strings; osmnx's loader restores
-        # the well-known ones, but our custom cost attrs need re-typing.
-        for _, _, d in G.edges(data=True):
-            for key in _EDGE_FLOAT_ATTRS:
-                if key in d:
-                    d[key] = float(d[key])
-        for _, d in G.nodes(data=True):
-            d["y"] = float(d["y"])
-            d["x"] = float(d["x"])
-            if "elevation" in d:
-                d["elevation"] = float(d["elevation"])
-        return _prune_to_largest_scc(G)
+    cache_path = region["cache_path"]
+    if os.path.exists(cache_path):
+        # Pickle instead of GraphML/XML: this graph is already fully typed
+        # and pruned at save time, so loading is a straight deserialize —
+        # no XML parsing, no re-casting floats. That pure-Python parsing
+        # work was slow enough on a throttled free-tier CPU to hold the
+        # GIL and stall the whole single-worker process for minutes.
+        with open(cache_path, "rb") as f:
+            return pickle.load(f)
 
     print(f"[graph] building '{region_id}' from OpenStreetMap (dist={region['radius_m']}m) — this can take a while")
     G = ox.graph_from_point(
@@ -153,7 +141,8 @@ def _build_graph(region_id):
         d["traffic_base_s"] = travel_time_s * traffic_susceptibility * config.TRAFFIC_IMPACT
         d.pop("travel_time", None)
 
-    ox.save_graphml(G, graphml_path)
+    with open(cache_path, "wb") as f:
+        pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
     return G
 
 
