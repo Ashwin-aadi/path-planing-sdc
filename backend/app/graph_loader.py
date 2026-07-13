@@ -29,6 +29,24 @@ def _first(value):
     return value[0] if isinstance(value, list) else value
 
 
+def _prune_to_largest_scc(G):
+    """A weakly-connected drive graph can still have nodes that are only
+    reachable in one direction (typically one-way streets clipped at the
+    bounding-box edge) — every path through them is a dead end for A*.
+    Dropping everything outside the largest strongly connected component
+    guarantees any two remaining nodes are mutually reachable, so routing
+    between two points on the loaded map never fails for graph-topology
+    reasons — only real (user-placed) blockages can do that."""
+    if G.number_of_nodes() == 0:
+        return G
+    largest = max(nx.strongly_connected_components(G), key=len)
+    if len(largest) == G.number_of_nodes():
+        return G
+    dropped = G.number_of_nodes() - len(largest)
+    print(f"[graph] dropping {dropped} node(s) outside the largest strongly connected component")
+    return G.subgraph(largest).copy()
+
+
 def _build_graph():
     os.makedirs(config.CACHE_DIR, exist_ok=True)
     ox.settings.use_cache = True
@@ -46,7 +64,7 @@ def _build_graph():
         for _, d in G.nodes(data=True):
             d["y"] = float(d["y"])
             d["x"] = float(d["x"])
-        return G
+        return _prune_to_largest_scc(G)
 
     G = ox.graph_from_point(
         (config.CENTER_LAT, config.CENTER_LON),
@@ -76,6 +94,7 @@ def _build_graph():
         d["floor_s"] = FLOOR_FRACTION * length_m / REF_SPEED_MPS
         d.pop("travel_time", None)
 
+    G = _prune_to_largest_scc(G)
     ox.save_graphml(G, config.GRAPHML_PATH)
     return G
 

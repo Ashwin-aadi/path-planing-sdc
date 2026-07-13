@@ -70,6 +70,8 @@ def nearest_edge_lookup(lat: float, lon: float):
     if result is None:
         raise HTTPException(404, "No roads in graph")
     dist_m, u, v, snap_lat, snap_lon = result
+    if dist_m > config.MAX_SNAP_DIST_M:
+        raise HTTPException(400, f"That point is {round(dist_m)}m from the nearest road — outside the mapped area")
     return {
         "u": u, "v": v,
         "dist_m": round(dist_m, 1),
@@ -112,6 +114,13 @@ def route(req: RouteRequest):
 
     stops = [req.start] + req.waypoints
     snapped = [nearest_node(p.lat, p.lon) for p in stops]  # [(node_id, snap_dist), ...]
+
+    for i, (_, snap_dist) in enumerate(snapped):
+        if snap_dist > config.MAX_SNAP_DIST_M:
+            label = "Start" if i == 0 else f"Destination {i}"
+            raise HTTPException(
+                400, f"{label} is {round(snap_dist)}m from the nearest road — outside the mapped area"
+            )
 
     full_coords = []
     distance_m = 0.0
