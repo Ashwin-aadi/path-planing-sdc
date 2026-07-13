@@ -3,12 +3,7 @@
 # MNNIT Allahabad (Motilal Nehru National Institute of Technology), Prayagraj, India
 CENTER_LAT = 25.4926
 CENTER_LON = 81.8662
-GRAPH_RADIUS_M = 5000  # 5km radius drivable network around campus
-
-# A click farther than this from the nearest road is outside the loaded map
-# area (or off-road entirely) — reject it with a clear error instead of
-# silently snapping to a distant, nonsensical node.
-MAX_SNAP_DIST_M = 750
+GRAPH_RADIUS_M = 10000  # 10km radius drivable network around campus
 
 CACHE_DIR = "./osm_cache"
 GRAPHML_PATH = "./osm_cache/mnnit_area.graphml"

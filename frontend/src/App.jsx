@@ -10,8 +10,7 @@ import { cumulativeDistances, pointAtDistance } from "./geo";
 import { DEFAULT_SPEED } from "./constants";
 
 const EMERGENCY_WEIGHTS = { speed: 0, time: 60, safety: 40 };
-const MIN_PLAYBACK_MS = 6000;
-const MAX_PLAYBACK_MS = 10 * 60 * 1000;
+const MIN_PLAYBACK_MS = 6000; // floor only, so very short hops don't look instantaneous
 
 function edgeKey(u, v) {
   return u < v ? `${u}_${v}` : `${v}_${u}`;
@@ -112,7 +111,7 @@ function App() {
   // --- Run simulation -------------------------------------------------
 
   function playbackDurationFor(etaSeconds, multiplier) {
-    return Math.max(MIN_PLAYBACK_MS, Math.min(MAX_PLAYBACK_MS, (etaSeconds / multiplier) * 1000));
+    return Math.max(MIN_PLAYBACK_MS, (etaSeconds / multiplier) * 1000);
   }
 
   function startSimFromRoute(data, destsAtStart, startPoint) {
