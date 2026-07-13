@@ -4,6 +4,7 @@ precomputes per-edge cost components so route requests don't have to."""
 import math
 import os
 import pickle
+import threading
 
 import networkx as nx
 import osmnx as ox
@@ -27,6 +28,9 @@ FLOOR_FRACTION = 0.05
 _graphs = {}       # region_id -> graph
 _node_indexes = {}  # region_id -> (STRtree, [node_id, ...]) aligned by position
 _edge_indexes = {}  # region_id -> (STRtree, [(u, v, key), ...]) aligned by position
+_graph_lock = threading.Lock()  # serializes building/loading so concurrent
+# requests for a not-yet-cached region wait for the one already in progress
+# instead of each kicking off their own redundant (slow) rebuild.
 
 
 def _first(value):
@@ -181,18 +185,19 @@ def _build_spatial_indexes(G):
 
 def get_graph(region=None):
     region = region or config.DEFAULT_REGION
-    if region not in _graphs:
-        # Free-tier hosting has limited RAM — keep only one region's graph
-        # (plus its spatial indexes) resident at a time. Switching regions
-        # reloads from the on-disk graphml cache (fast) rather than a full
-        # rebuild, so this only costs a couple seconds, not correctness.
-        _graphs.clear()
-        _node_indexes.clear()
-        _edge_indexes.clear()
-        G = _build_graph(region)
-        _graphs[region] = G
-        _node_indexes[region], _edge_indexes[region] = _build_spatial_indexes(G)
-    return _graphs[region]
+    with _graph_lock:
+        if region not in _graphs:
+            # Free-tier hosting has limited RAM — keep only one region's
+            # graph (plus its spatial indexes) resident at a time. Switching
+            # regions reloads from the on-disk cache (fast) rather than a
+            # full rebuild, so this only costs a couple seconds.
+            _graphs.clear()
+            _node_indexes.clear()
+            _edge_indexes.clear()
+            G = _build_graph(region)
+            _graphs[region] = G
+            _node_indexes[region], _edge_indexes[region] = _build_spatial_indexes(G)
+        return _graphs[region]
 
 
 def haversine_m(lat1, lon1, lat2, lon2):
