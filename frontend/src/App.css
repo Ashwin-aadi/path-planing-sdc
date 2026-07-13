@@ -137,6 +137,56 @@
   cursor: not-allowed;
 }
 
+.dest-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.dest-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12.5px;
+}
+
+.dest-num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #dc2626;
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dest-coords {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+.dest-remove {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  opacity: 0.5;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.dest-remove:hover {
+  opacity: 1;
+  color: #dc2626;
+}
+
 .stat-row {
   display: flex;
   justify-content: space-between;

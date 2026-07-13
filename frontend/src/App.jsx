@@ -5,12 +5,13 @@ import MapView from "./MapView";
 import ControlPanel from "./ControlPanel";
 import { getBounds, getEdges, toggleBlock, clearBlocks, computeRoute } from "./api";
 
-const EMERGENCY_WEIGHTS = { speed: 60, time: 40, safety: 0 };
+const EMERGENCY_WEIGHTS = { speed: 0, time: 60, safety: 40 };
 
 function App() {
   const [center, setCenter] = useState(null);
   const [mockLocation, setMockLocation] = useState(null);
-  const [destination, setDestination] = useState(null);
+  const [destinations, setDestinations] = useState([]);
+  const nextDestId = useRef(1);
 
   const [edgesGeoJson, setEdgesGeoJson] = useState(null);
   const [blockedSet, setBlockedSet] = useState(new Set());
@@ -47,7 +48,7 @@ function App() {
   const effectiveWeights = emergency ? EMERGENCY_WEIGHTS : weights;
 
   useEffect(() => {
-    if (!mockLocation || !destination) return;
+    if (!mockLocation || destinations.length === 0) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(async () => {
@@ -56,7 +57,7 @@ function App() {
       try {
         const data = await computeRoute({
           start: mockLocation,
-          end: destination,
+          waypoints: destinations.map(({ lat, lon }) => ({ lat, lon })),
           weights: effectiveWeights,
           emergency,
         });
@@ -71,7 +72,15 @@ function App() {
 
     return () => clearTimeout(debounceRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mockLocation, destination, weights, emergency, blockedSet]);
+  }, [mockLocation, destinations, weights, emergency, blockedSet]);
+
+  const handleAddDestination = (latlon) => {
+    setDestinations((prev) => [...prev, { ...latlon, id: nextDestId.current++ }]);
+  };
+
+  const handleRemoveDestination = (id) => {
+    setDestinations((prev) => prev.filter((d) => d.id !== id));
+  };
 
   const handleToggleBlock = async (u, v) => {
     const res = await toggleBlock(u, v);
@@ -105,14 +114,16 @@ function App() {
         routeLoading={routeLoading}
         blockedCount={blockedSet.size}
         onClearBlocks={handleClearBlocks}
-        hasDestination={!!destination}
+        destinations={destinations}
+        onRemoveDestination={handleRemoveDestination}
       />
       <MapView
         center={center}
         mockLocation={mockLocation}
         setMockLocation={setMockLocation}
-        destination={destination}
-        setDestination={setDestination}
+        destinations={destinations}
+        onAddDestination={handleAddDestination}
+        onRemoveDestination={handleRemoveDestination}
         edgesGeoJson={edgesGeoJson}
         blockedSet={blockedSet}
         onToggleBlock={handleToggleBlock}

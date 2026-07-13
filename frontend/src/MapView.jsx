@@ -22,13 +22,26 @@ function pinIcon(color) {
   });
 }
 
-const startIcon = pinIcon("#2563eb");
-const destIcon = pinIcon("#dc2626");
+function numberedIcon(n) {
+  return L.divIcon({
+    className: "",
+    html: `<div style="
+      width:22px;height:22px;border-radius:50%;
+      background:#dc2626;color:white;font:600 12px system-ui;
+      display:flex;align-items:center;justify-content:center;
+      border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.5);
+    ">${n}</div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+}
 
-function ClickToSetDestination({ onSetDestination }) {
+const startIcon = pinIcon("#2563eb");
+
+function ClickToAddDestination({ onAddDestination }) {
   useMapEvents({
     click(e) {
-      onSetDestination({ lat: e.latlng.lat, lon: e.latlng.lng });
+      onAddDestination({ lat: e.latlng.lat, lon: e.latlng.lng });
     },
   });
   return null;
@@ -42,8 +55,9 @@ export default function MapView({
   center,
   mockLocation,
   setMockLocation,
-  destination,
-  setDestination,
+  destinations,
+  onAddDestination,
+  onRemoveDestination,
   edgesGeoJson,
   blockedSet,
   onToggleBlock,
@@ -72,8 +86,9 @@ export default function MapView({
   }, [styleFn]);
 
   const onEachFeature = (feature, layer) => {
-    layer.on("click", (e) => {
+    layer.on("contextmenu", (e) => {
       L.DomEvent.stopPropagation(e);
+      L.DomEvent.preventDefault(e);
       onToggleBlock(feature.properties.u, feature.properties.v);
     });
   };
@@ -86,7 +101,7 @@ export default function MapView({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <ClickToSetDestination onSetDestination={setDestination} />
+      <ClickToAddDestination onAddDestination={onAddDestination} />
 
       {edgesGeoJson && (
         <GeoJSON
@@ -118,9 +133,16 @@ export default function MapView({
         />
       )}
 
-      {destination && (
-        <Marker position={[destination.lat, destination.lon]} icon={destIcon} />
-      )}
+      {destinations.map((d, i) => (
+        <Marker
+          key={d.id}
+          position={[d.lat, d.lon]}
+          icon={numberedIcon(i + 1)}
+          eventHandlers={{
+            click: () => onRemoveDestination(d.id),
+          }}
+        />
+      ))}
     </MapContainer>
   );
 }
