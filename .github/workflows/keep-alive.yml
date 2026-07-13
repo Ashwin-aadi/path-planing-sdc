@@ -1,0 +1,25 @@
+name: Keep Render backend awake
+
+# Render's free web services spin down after ~15 min of no traffic; this
+# pings the health endpoint often enough that it never sits idle that long.
+# Needs a repo variable RENDER_BACKEND_URL set to the deployed backend's
+# base URL (Settings -> Secrets and variables -> Actions -> Variables) —
+# until that's set, the ping step just skips itself instead of failing.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend health endpoint
+        env:
+          BACKEND_URL: ${{ vars.RENDER_BACKEND_URL }}
+        run: |
+          if [ -z "$BACKEND_URL" ]; then
+            echo "RENDER_BACKEND_URL repo variable not set yet - skipping."
+            exit 0
+          fi
+          curl -sf "$BACKEND_URL/api/health" && echo "ping ok" || echo "ping failed (cold start in progress?)"
