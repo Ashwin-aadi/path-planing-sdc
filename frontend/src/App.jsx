@@ -7,11 +7,11 @@ import {
   getBounds, getEdges, setBlock, clearBlocks, computeRoute, nearestEdge,
 } from "./api";
 import { cumulativeDistances, pointAtDistance } from "./geo";
+import { DEFAULT_SPEED } from "./constants";
 
 const EMERGENCY_WEIGHTS = { speed: 0, time: 60, safety: 40 };
 const MIN_PLAYBACK_MS = 6000;
-const MAX_PLAYBACK_MS = 30000;
-const PLAYBACK_SPEEDUP = 20; // simulate at ~20x real driving speed
+const MAX_PLAYBACK_MS = 10 * 60 * 1000;
 
 function edgeKey(u, v) {
   return u < v ? `${u}_${v}` : `${v}_${u}`;
@@ -41,6 +41,7 @@ function App() {
 
   const [running, setRunning] = useState(false);
   const [simPosition, setSimPosition] = useState(null);
+  const [speedMultiplier, setSpeedMultiplier] = useState(DEFAULT_SPEED);
 
   const debounceRef = useRef(null);
   const animFrameRef = useRef(null);
@@ -110,8 +111,8 @@ function App() {
 
   // --- Run simulation -------------------------------------------------
 
-  function playbackDurationFor(etaSeconds) {
-    return Math.max(MIN_PLAYBACK_MS, Math.min(MAX_PLAYBACK_MS, (etaSeconds / PLAYBACK_SPEEDUP) * 1000));
+  function playbackDurationFor(etaSeconds, multiplier) {
+    return Math.max(MIN_PLAYBACK_MS, Math.min(MAX_PLAYBACK_MS, (etaSeconds / multiplier) * 1000));
   }
 
   function startSimFromRoute(data, destsAtStart, startPoint) {
@@ -130,12 +131,28 @@ function App() {
       path, cumDist, total, legBoundaries,
       destinations: destsAtStart,
       startTime: null,
-      durationMs: playbackDurationFor(data.eta_s),
+      etaSeconds: data.eta_s,
+      durationMs: playbackDurationFor(data.eta_s, speedMultiplier),
     };
     setRunning(true);
     setSimPosition(startPoint);
     animFrameRef.current = requestAnimationFrame(tick);
   }
+
+  // Changing speed mid-run rescales the remaining animation without
+  // jumping the car's current position: same fraction traveled, new pace.
+  const handleSetSpeed = (multiplier) => {
+    setSpeedMultiplier(multiplier);
+    const s = simRef.current;
+    if (s && running) {
+      const now = performance.now();
+      const elapsed = s.startTime !== null ? now - s.startTime : 0;
+      const fraction = Math.min(1, elapsed / s.durationMs);
+      const newDuration = playbackDurationFor(s.etaSeconds, multiplier);
+      s.durationMs = newDuration;
+      s.startTime = now - fraction * newDuration;
+    }
+  };
 
   function remainingDestinationsAt(s, targetDist) {
     let passed = 0;
@@ -312,6 +329,8 @@ function App() {
         running={running}
         onRun={handleRun}
         onStop={handleStop}
+        speedMultiplier={speedMultiplier}
+        onSetSpeed={handleSetSpeed}
         routeData={routeData}
         routeError={routeError}
         routeLoading={routeLoading}

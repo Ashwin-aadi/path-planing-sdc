@@ -79,6 +79,17 @@ export default function MapView({
 }) {
   const geoJsonRef = useRef(null);
 
+  // react-leaflet's GeoJSON only invokes onEachFeature once, at layer
+  // creation — the "contextmenu" listener registered inside it would
+  // otherwise keep whatever onRoadRightClick closure existed at that
+  // moment forever (stale `running`/`blockedSet`). Route through a ref
+  // that's kept current every render so the listener always calls the
+  // latest handler.
+  const onRoadRightClickRef = useRef(onRoadRightClick);
+  useEffect(() => {
+    onRoadRightClickRef.current = onRoadRightClick;
+  }, [onRoadRightClick]);
+
   const styleFn = useMemo(
     () => (feature) => {
       const key = edgeKey(feature.properties.u, feature.properties.v);
@@ -103,7 +114,7 @@ export default function MapView({
     layer.on("contextmenu", (e) => {
       L.DomEvent.stopPropagation(e);
       L.DomEvent.preventDefault(e);
-      onRoadRightClick(feature.properties.u, feature.properties.v, {
+      onRoadRightClickRef.current(feature.properties.u, feature.properties.v, {
         lat: e.latlng.lat,
         lon: e.latlng.lng,
       });

@@ -190,6 +190,30 @@
   border-color: #dc2626;
 }
 
+.speed-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.speed-btn {
+  flex: 1;
+  padding: 6px 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.speed-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
 .obstacle-icon {
   width: 18px;
   height: 18px;

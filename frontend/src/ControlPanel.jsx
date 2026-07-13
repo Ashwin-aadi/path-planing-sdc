@@ -1,3 +1,5 @@
+import { SPEED_OPTIONS } from "./constants";
+
 const EMERGENCY_PRESET = { speed: 0, time: 60, safety: 40 };
 
 // Keeps the three weights summing to 100: the slider being dragged takes
@@ -53,6 +55,8 @@ export default function ControlPanel({
   running,
   onRun,
   onStop,
+  speedMultiplier,
+  onSetSpeed,
   routeData,
   routeError,
   routeLoading,
@@ -178,6 +182,19 @@ export default function ControlPanel({
         {running && (
           <p className="hint">Driving the route — add an obstacle to force a live reroute.</p>
         )}
+
+        <div className="speed-row">
+          {SPEED_OPTIONS.map((s) => (
+            <button
+              key={s}
+              className={speedMultiplier === s ? "speed-btn active" : "speed-btn"}
+              onClick={() => onSetSpeed(s)}
+            >
+              {s}×
+            </button>
+          ))}
+        </div>
+        <p className="hint">Playback speed{running ? " — adjusts the current drive live" : ""}.</p>
       </section>
 
       <section>
