@@ -21,6 +21,7 @@ class RouteRequest(BaseModel):
     waypoints: list[LatLon] = Field(min_length=1)
     weights: Weights
     emergency: bool = False
+    region: Optional[str] = None
 
 
 class BlockRequest(BaseModel):

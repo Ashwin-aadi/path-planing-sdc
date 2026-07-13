@@ -5,6 +5,7 @@ import {
   GeoJSON,
   Marker,
   Polyline,
+  useMap,
   useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
@@ -48,6 +49,47 @@ const obstacleIcon = L.divIcon({
 });
 
 const startIcon = pinIcon("#2563eb");
+
+// Directional arrow, rotated to the current heading (0deg = north, clockwise) —
+// used in place of the plain pin whenever a heading (real compass/GPS course,
+// or the simulated drive's look-ahead bearing) is actually known.
+function headingIcon(heading, color = "#2563eb") {
+  return L.divIcon({
+    className: "",
+    html: `<div style="
+      width:26px;height:26px;transform:rotate(${heading}deg);
+      display:flex;align-items:center;justify-content:center;
+    "><svg width="24" height="24" viewBox="0 0 24 24" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,.6))">
+      <path d="M12 2 L19 21 L12 16.5 L5 21 Z" fill="${color}" stroke="white" stroke-width="1.2"/>
+    </svg></div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  });
+}
+
+// react-leaflet only applies MapContainer's `center` prop once, at mount —
+// this re-centers the live map whenever `center` changes afterward (e.g. a
+// region switch), without needing to remount the whole map.
+function Recenter({ center }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center) map.setView([center.lat, center.lon], map.getZoom());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [center]);
+  return null;
+}
+
+// Pans (with animation) to a search-selected location. `target` carries a
+// monotonic `seq` so picking the same result twice in a row still flies —
+// a plain lat/lon object wouldn't change and the effect wouldn't re-fire.
+function FlyTo({ target }) {
+  const map = useMap();
+  useEffect(() => {
+    if (target) map.flyTo([target.lat, target.lon], Math.max(map.getZoom(), 15));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+  return null;
+}
 
 function MapClickHandler({ onMapClick }) {
   useMapEvents({
@@ -99,8 +141,11 @@ function edgeKey(u, v) {
 
 export default function MapView({
   center,
-  mockLocation,
-  setMockLocation,
+  currentLocation,
+  setCurrentLocation,
+  heading,
+  locationMode,
+  flyTarget,
   running,
   destinations,
   onRemoveDestination,
@@ -168,6 +213,8 @@ export default function MapView({
       />
       <MapClickHandler onMapClick={onMapClick} />
       <BoundsWatcher onBoundsChange={onBoundsChange} />
+      <Recenter center={center} />
+      <FlyTo target={flyTarget} />
 
       {edgesGeoJson && (
         <GeoJSON
@@ -186,15 +233,15 @@ export default function MapView({
         />
       )}
 
-      {mockLocation && (
+      {currentLocation && (
         <Marker
-          position={[mockLocation.lat, mockLocation.lon]}
-          icon={startIcon}
-          draggable={!running}
+          position={[currentLocation.lat, currentLocation.lon]}
+          icon={heading != null ? headingIcon(heading) : startIcon}
+          draggable={!running && locationMode === "mock"}
           eventHandlers={{
             dragend: (e) => {
               const { lat, lng } = e.target.getLatLng();
-              setMockLocation({ lat, lon: lng });
+              setCurrentLocation({ lat, lon: lng });
             },
           }}
         />

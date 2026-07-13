@@ -23,9 +23,9 @@ MAX_SPEED_KPH = REF_SPEED_KPH
 # A*/Dijkstra correctness) and keeps the haversine heuristic admissible.
 FLOOR_FRACTION = 0.05
 
-_graph = None
-_node_index = None  # (STRtree, [node_id, ...]) aligned by position
-_edge_index = None  # (STRtree, [(u, v, key), ...]) aligned by position
+_graphs = {}       # region_id -> graph
+_node_indexes = {}  # region_id -> (STRtree, [node_id, ...]) aligned by position
+_edge_indexes = {}  # region_id -> (STRtree, [(u, v, key), ...]) aligned by position
 
 
 def _first(value):
@@ -77,13 +77,21 @@ def _add_elevation(G):
     return G
 
 
-def _build_graph():
+def region_graphml_ready(region_id):
+    """Cheap on-disk check (no load) — lets /api/regions warn the frontend
+    before it triggers a slow first-time OSM download + elevation fetch."""
+    return os.path.exists(config.REGIONS[region_id]["graphml_path"])
+
+
+def _build_graph(region_id):
+    region = config.REGIONS[region_id]
     os.makedirs(config.CACHE_DIR, exist_ok=True)
     ox.settings.use_cache = True
     ox.settings.cache_folder = config.CACHE_DIR
 
-    if os.path.exists(config.GRAPHML_PATH):
-        G = ox.load_graphml(config.GRAPHML_PATH)
+    graphml_path = region["graphml_path"]
+    if os.path.exists(graphml_path):
+        G = ox.load_graphml(graphml_path)
         # graphml round-trips numeric attrs as strings; osmnx's loader restores
         # the well-known ones, but our custom cost attrs need re-typing.
         for _, _, d in G.edges(data=True):
@@ -97,9 +105,10 @@ def _build_graph():
                 d["elevation"] = float(d["elevation"])
         return _prune_to_largest_scc(G)
 
+    print(f"[graph] building '{region_id}' from OpenStreetMap (dist={region['radius_m']}m) — this can take a while")
     G = ox.graph_from_point(
-        (config.CENTER_LAT, config.CENTER_LON),
-        dist=config.GRAPH_RADIUS_M,
+        (region["center_lat"], region["center_lon"]),
+        dist=region["radius_m"],
         network_type="drive",
         simplify=True,
     )
@@ -144,7 +153,7 @@ def _build_graph():
         d["traffic_base_s"] = travel_time_s * traffic_susceptibility * config.TRAFFIC_IMPACT
         d.pop("travel_time", None)
 
-    ox.save_graphml(G, config.GRAPHML_PATH)
+    ox.save_graphml(G, graphml_path)
     return G
 
 
@@ -181,12 +190,13 @@ def _build_spatial_indexes(G):
     return node_index, edge_index
 
 
-def get_graph():
-    global _graph, _node_index, _edge_index
-    if _graph is None:
-        _graph = _build_graph()
-        _node_index, _edge_index = _build_spatial_indexes(_graph)
-    return _graph
+def get_graph(region=None):
+    region = region or config.DEFAULT_REGION
+    if region not in _graphs:
+        G = _build_graph(region)
+        _graphs[region] = G
+        _node_indexes[region], _edge_indexes[region] = _build_spatial_indexes(G)
+    return _graphs[region]
 
 
 def haversine_m(lat1, lon1, lat2, lon2):
@@ -198,15 +208,16 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * R * math.asin(math.sqrt(a))
 
 
-def nearest_node(lat, lon):
+def nearest_node(lat, lon, region=None):
     """Nearest node via an R-tree spatial index (STRtree) — avoids a
     linear scan over every node on each lookup, which stops scaling once
     the graph covers more than a small neighborhood."""
-    get_graph()
-    tree, node_ids = _node_index
+    region = region or config.DEFAULT_REGION
+    G = get_graph(region)
+    tree, node_ids = _node_indexes[region]
     idx = tree.nearest(Point(lon, lat))
     node_id = node_ids[idx]
-    d = _graph.nodes[node_id]
+    d = G.nodes[node_id]
     return node_id, haversine_m(lat, lon, d["y"], d["x"])
 
 
@@ -224,12 +235,13 @@ def edge_latlon_coords(G, u, v, key):
     ]
 
 
-def nearest_edge(lat, lon):
+def nearest_edge(lat, lon, region=None):
     """Snap a click point to the nearest road (for obstacle placement) via
     an R-tree spatial index over the deduped undirected pairs. Returns
     (dist_m, u, v, snapped_lat, snapped_lon) or None if the graph is empty."""
-    get_graph()
-    tree, geoms, refs = _edge_index
+    region = region or config.DEFAULT_REGION
+    get_graph(region)
+    tree, geoms, refs = _edge_indexes[region]
     if not geoms:
         return None
 
@@ -243,24 +255,40 @@ def nearest_edge(lat, lon):
     return dist_m, u, v, nearest_pt.y, nearest_pt.x
 
 
-def edges_in_bbox(min_lat, max_lat, min_lon, max_lon):
+def edges_in_bbox(min_lat, max_lat, min_lon, max_lon, region=None):
     """Road pairs (u, v, key) whose geometry falls in the given lat/lon box,
     via the edge R-tree. Lets the frontend load only what's on screen
     instead of the whole graph, which stops scaling once the map covers
     a wide area."""
-    get_graph()
-    tree, geoms, refs = _edge_index
+    region = region or config.DEFAULT_REGION
+    get_graph(region)
+    tree, geoms, refs = _edge_indexes[region]
     query_box = box(min_lon, min_lat, max_lon, max_lat)
     idxs = tree.query(query_box)
     return [refs[i] for i in idxs]
 
 
-def graph_bounds():
-    G = get_graph()
+def graph_bounds(region=None):
+    region = region or config.DEFAULT_REGION
+    G = get_graph(region)
     lats = [d["y"] for _, d in G.nodes(data=True)]
     lons = [d["x"] for _, d in G.nodes(data=True)]
+    r = config.REGIONS[region]
     return {
-        "center": {"lat": config.CENTER_LAT, "lon": config.CENTER_LON},
+        "region": region,
+        "center": {"lat": r["center_lat"], "lon": r["center_lon"]},
         "min_lat": min(lats), "max_lat": max(lats),
         "min_lon": min(lons), "max_lon": max(lons),
     }
+
+
+def nearest_region(lat, lon):
+    """Which configured region's center is closest to a real GPS fix —
+    used to auto-switch regions when live location comes from somewhere
+    other than the currently loaded map (e.g. testing away from campus)."""
+    best_id, best_dist = None, None
+    for region_id, r in config.REGIONS.items():
+        d = haversine_m(lat, lon, r["center_lat"], r["center_lon"])
+        if best_dist is None or d < best_dist:
+            best_id, best_dist = region_id, d
+    return best_id, best_dist

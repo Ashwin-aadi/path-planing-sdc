@@ -1,12 +1,27 @@
 """Static configuration for the routing backend."""
 
-# MNNIT Allahabad (Motilal Nehru National Institute of Technology), Prayagraj, India
-CENTER_LAT = 25.4926
-CENTER_LON = 81.8662
-GRAPH_RADIUS_M = 20000  # 20km radius drivable network around campus
-
 CACHE_DIR = "./osm_cache"
-GRAPHML_PATH = "./osm_cache/mnnit_area.graphml"
+
+# Multiple demo regions so testing works wherever the device actually is —
+# real GPS (Phase 2) is useless without road data under the user's feet.
+# Each region gets its own cached graphml; built lazily on first use.
+REGIONS = {
+    "prayagraj": {
+        "label": "Prayagraj (MNNIT)",
+        "center_lat": 25.4926,
+        "center_lon": 81.8662,
+        "radius_m": 20000,
+        "graphml_path": "./osm_cache/mnnit_area.graphml",
+    },
+    "gwalior": {
+        "label": "Gwalior",
+        "center_lat": 26.2183,
+        "center_lon": 78.1828,
+        "radius_m": 20000,
+        "graphml_path": "./osm_cache/gwalior_area.graphml",
+    },
+}
+DEFAULT_REGION = "prayagraj"
 
 # Fallback speed table (km/h) since OSM rarely tags maxspeed in this region.
 # These are approximate Indian urban defaults, not measured data — documented

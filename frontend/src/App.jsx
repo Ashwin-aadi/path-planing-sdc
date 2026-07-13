@@ -4,12 +4,15 @@ import "./App.css";
 import MapView from "./MapView";
 import ControlPanel from "./ControlPanel";
 import {
-  getBounds, getEdges, setBlock, clearBlocks, computeRoute, nearestEdge,
+  getBounds, getEdges, setBlock, clearBlocks, computeRoute, nearestEdge, getRegions, getNearestRegion, geocodeSearch,
 } from "./api";
-import { cumulativeDistances, pointAtDistance } from "./geo";
+import {
+  cumulativeDistances, pointAtDistance, bearingDeg, computeManeuvers, nextManeuver, projectToPath,
+} from "./geo";
+import { useGeolocation } from "./useGeolocation";
 import { DEFAULT_SPEED } from "./constants";
 
-const EMERGENCY_WEIGHTS = { speed: 0, time: 60, safety: 40 };
+const EMERGENCY_WEIGHTS = { speed: 0, time: 45, safety: 30, traffic: 25, economy: 0 };
 const MIN_PLAYBACK_MS = 6000; // floor only, so very short hops don't look instantaneous
 
 function edgeKey(u, v) {
@@ -18,7 +21,7 @@ function edgeKey(u, v) {
 
 function App() {
   const [center, setCenter] = useState(null);
-  const [mockLocation, setMockLocation] = useState(null);
+  const [currentLocation, setCurrentLocation] = useState(null);
   const [destinations, setDestinations] = useState([]);
   const nextDestId = useRef(1);
 
@@ -31,11 +34,16 @@ function App() {
   const [blockedSet, setBlockedSet] = useState(new Set());
   const edgesFetchSeq = useRef(0);
 
-  const [weights, setWeights] = useState({ speed: 33, time: 34, safety: 33 });
+  const [weights, setWeights] = useState({ speed: 20, time: 20, safety: 20, traffic: 20, economy: 20 });
   const [emergency, setEmergency] = useState(false);
 
   const [mode, setMode] = useState("addDestination"); // 'setLocation' | 'addDestination' | 'addObstacle'
-  const [locationMode, setLocationMode] = useState("mock");
+  const [locationMode, setLocationMode] = useState("mock"); // 'mock' | 'real'
+
+  const [regions, setRegions] = useState([]);
+  const [region, setRegion] = useState(null);
+  const [regionStatus, setRegionStatus] = useState(null); // null | {loading:true} | {error}
+  const regionAutoDetectRef = useRef(false);
 
   const [routeData, setRouteData] = useState(null);
   const [routeError, setRouteError] = useState(null);
@@ -43,28 +51,102 @@ function App() {
 
   const [running, setRunning] = useState(false);
   const [simPosition, setSimPosition] = useState(null);
+  const [simHeading, setSimHeading] = useState(null);
   const [speedMultiplier, setSpeedMultiplier] = useState(DEFAULT_SPEED);
+
+  const [flyTarget, setFlyTarget] = useState(null);
+  const flySeqRef = useRef(0);
 
   const debounceRef = useRef(null);
   const animFrameRef = useRef(null);
   const simRef = useRef(null);
   const rerouteSeqRef = useRef(0);
 
+  const geo = useGeolocation(locationMode === "real");
+
+  // --- Regions ------------------------------------------------------------
+
   useEffect(() => {
-    getBounds().then((b) => {
-      setCenter(b.center);
-      setMockLocation(b.center);
+    getRegions().then((r) => {
+      setRegions(r.regions);
+      setRegion(r.default);
     });
   }, []);
 
+  // Loads (and, first time only, triggers the backend to build) whichever
+  // region is selected. Runs once at startup and again on every switch.
+  useEffect(() => {
+    if (!region) return;
+    let cancelled = false;
+    setRegionStatus({ loading: true });
+    getBounds(region)
+      .then((b) => {
+        if (cancelled) return;
+        setCenter(b.center);
+        setCurrentLocation(b.center);
+        setRegionStatus(null);
+        setRegions((prev) => prev.map((r) => (r.id === region ? { ...r, ready: true } : r)));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setRegionStatus({ error: err.message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [region]);
+
+  const handleRegionChange = (newRegion) => {
+    if (!newRegion || newRegion === region) return;
+    setDestinations([]);
+    setObstacles([]);
+    setBlockedSet(new Set());
+    setEdgesGeoJson(null);
+    setEdgesKey((k) => k + 1);
+    setRouteData(null);
+    setRouteError(null);
+    setMapBounds(null);
+    setRegion(newRegion);
+  };
+
+  // First real GPS fix after switching to "real" mode: auto-load whichever
+  // region actually covers where the device is, so testing away from the
+  // default demo city (e.g. Gwalior) doesn't route against the wrong map.
+  useEffect(() => {
+    if (locationMode !== "real") {
+      regionAutoDetectRef.current = false;
+      return;
+    }
+    if (!geo.position || regionAutoDetectRef.current) return;
+    regionAutoDetectRef.current = true;
+    getNearestRegion(geo.position.lat, geo.position.lon).then((res) => {
+      if (res.region !== region) handleRegionChange(res.region);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationMode, geo.position]);
+
+  // While in real mode (and not mid drive-simulation), location tracks the GPS fix directly.
+  useEffect(() => {
+    if (locationMode === "real" && geo.position && !running) {
+      setCurrentLocation(geo.position);
+    }
+  }, [locationMode, geo.position, running]);
+
+  // "Set location" has nothing to do in real mode (location comes from GPS) —
+  // avoid leaving the map tool stuck there with no effect.
+  useEffect(() => {
+    if (locationMode === "real" && mode === "setLocation") setMode("addDestination");
+  }, [locationMode, mode]);
+
   // The graph now spans a wide area, so only the roads visible in the
   // current viewport (plus padding) are fetched — re-fetched whenever the
-  // map settles after a pan/zoom. A sequence guard drops stale responses
-  // if a fetch from an earlier viewport resolves after a newer one.
+  // map settles after a pan/zoom (including the recenter that follows a
+  // region switch). A sequence guard drops stale responses if a fetch from
+  // an earlier viewport resolves after a newer one.
   useEffect(() => {
-    if (!mapBounds) return;
+    if (!mapBounds || !region) return;
     const mySeq = ++edgesFetchSeq.current;
-    getEdges(mapBounds).then((fc) => {
+    getEdges(mapBounds, region).then((fc) => {
       if (edgesFetchSeq.current !== mySeq) return;
       setEdgesGeoJson(fc);
       setEdgesKey((k) => k + 1);
@@ -78,7 +160,7 @@ function App() {
         return next;
       });
     });
-  }, [mapBounds]);
+  }, [mapBounds, region]);
 
   const effectiveWeights = emergency ? EMERGENCY_WEIGHTS : weights;
 
@@ -86,7 +168,7 @@ function App() {
   // since position updates during a run go through the simulation loop
   // instead, and mid-run obstacle reroutes are handled explicitly.
   useEffect(() => {
-    if (running || !mockLocation || destinations.length === 0) return;
+    if (running || !currentLocation || destinations.length === 0) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(async () => {
@@ -94,10 +176,11 @@ function App() {
       setRouteError(null);
       try {
         const data = await computeRoute({
-          start: mockLocation,
+          start: currentLocation,
           waypoints: destinations.map(({ lat, lon }) => ({ lat, lon })),
           weights: effectiveWeights,
           emergency,
+          region,
         });
         setRouteData(data);
       } catch (err) {
@@ -110,7 +193,7 @@ function App() {
 
     return () => clearTimeout(debounceRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mockLocation, destinations, weights, emergency, blockedSet, running]);
+  }, [currentLocation, destinations, weights, emergency, blockedSet, running, region]);
 
   const handleAddDestination = (latlon) => {
     setDestinations((prev) => [...prev, { ...latlon, id: nextDestId.current++ }]);
@@ -188,23 +271,26 @@ function App() {
     const fraction = Math.min(1, elapsed / s.durationMs);
     const targetDist = fraction * s.total;
     const pos = pointAtDistance(s.path, s.cumDist, targetDist);
+    const lookahead = pointAtDistance(s.path, s.cumDist, Math.min(s.total, targetDist + 5));
     setSimPosition(pos);
+    setSimHeading(bearingDeg(pos, lookahead));
 
     if (fraction < 1) {
       animFrameRef.current = requestAnimationFrame(tick);
     } else {
-      setMockLocation(pos);
+      setCurrentLocation(pos);
       setDestinations([]);
       setSimPosition(null);
+      setSimHeading(null);
       setRunning(false);
       simRef.current = null;
     }
   }
 
   const handleRun = () => {
-    if (running || !routeData || destinations.length === 0 || !mockLocation) return;
+    if (running || !routeData || destinations.length === 0 || !currentLocation || locationMode !== "mock") return;
     setMode("addObstacle");
-    startSimFromRoute(routeData, destinations, mockLocation);
+    startSimFromRoute(routeData, destinations, currentLocation);
   };
 
   const handleStop = () => {
@@ -215,9 +301,10 @@ function App() {
       const elapsed = s.startTime !== null ? performance.now() - s.startTime : 0;
       const targetDist = Math.min(1, elapsed / s.durationMs) * s.total;
       setDestinations(remainingDestinationsAt(s, targetDist));
-      setMockLocation(simPosition);
+      setCurrentLocation(simPosition);
     }
     setSimPosition(null);
+    setSimHeading(null);
     setRunning(false);
     simRef.current = null;
   };
@@ -243,6 +330,7 @@ function App() {
         waypoints: remaining.map(({ lat, lon }) => ({ lat, lon })),
         weights: effectiveWeights,
         emergency,
+        region,
       });
       if (rerouteSeqRef.current !== mySeq) return; // superseded by a newer reroute
       setRouteData(data);
@@ -252,8 +340,9 @@ function App() {
       if (rerouteSeqRef.current !== mySeq) return;
       setRouteError(err.message);
       setDestinations(remaining);
-      setMockLocation(currentPos);
+      setCurrentLocation(currentPos);
       setSimPosition(null);
+      setSimHeading(null);
       setRunning(false);
       simRef.current = null;
     } finally {
@@ -265,7 +354,7 @@ function App() {
 
   const handlePlaceObstacleAt = async (latlon) => {
     try {
-      const res = await nearestEdge(latlon.lat, latlon.lon);
+      const res = await nearestEdge(latlon.lat, latlon.lon, region);
       const { u, v, snapped } = res;
       const key = edgeKey(u, v);
       if (blockedSet.has(key)) return;
@@ -319,8 +408,8 @@ function App() {
 
   const handleMapClick = (latlon) => {
     if (mode === "setLocation") {
-      if (running) return;
-      setMockLocation(latlon);
+      if (running || locationMode !== "mock") return;
+      setCurrentLocation(latlon);
     } else if (mode === "addDestination") {
       if (running) return;
       handleAddDestination(latlon);
@@ -329,8 +418,52 @@ function App() {
     }
   };
 
+  // --- Place-name search (free OSM Nominatim geocoding) -------------------
+
+  const handleSearch = (query) => geocodeSearch(query, region);
+
+  // Picking a result behaves exactly like clicking the map there — same
+  // setLocation/addDestination/addObstacle dispatch — plus panning the map
+  // there so the choice is visible even if it's off-screen.
+  const handleSelectSearchResult = ({ lat, lon }) => {
+    setFlyTarget({ lat, lon, seq: ++flySeqRef.current });
+    handleMapClick({ lat, lon });
+  };
+
   const routeCoords = useMemo(() => routeData?.path, [routeData]);
-  const displayLocation = running ? simPosition : mockLocation;
+  const displayLocation = running ? simPosition : currentLocation;
+
+  // --- Orientation & direction assistance --------------------------------
+
+  const routeGeom = useMemo(() => {
+    if (!routeData) return null;
+    const cumDist = cumulativeDistances(routeData.path);
+    return {
+      path: routeData.path,
+      cumDist,
+      total: cumDist[cumDist.length - 1],
+      maneuvers: computeManeuvers(routeData.path, cumDist),
+    };
+  }, [routeData]);
+
+  const progress = useMemo(() => {
+    if (!routeGeom || !displayLocation) return null;
+    return projectToPath(routeGeom.path, routeGeom.cumDist, displayLocation);
+  }, [routeGeom, displayLocation]);
+
+  const upcomingManeuver = useMemo(() => {
+    if (!routeGeom || !progress) return null;
+    const m = nextManeuver(routeGeom.maneuvers, progress.along);
+    if (!m) return null;
+    return { ...m, remainingM: Math.max(0, m.dist - progress.along) };
+  }, [routeGeom, progress]);
+
+  const distanceRemainingM = routeGeom && progress ? Math.max(0, routeGeom.total - progress.along) : null;
+
+  // Real GPS/compass heading while driving live; a synthetic look-ahead
+  // bearing along the route while animating a simulated run; otherwise no
+  // meaningful "facing direction" to show.
+  const heading = locationMode === "real" ? geo.heading : running ? simHeading : null;
 
   return (
     <div className="app">
@@ -356,11 +489,24 @@ function App() {
         onRemoveDestination={handleRemoveDestination}
         obstacles={obstacles}
         onRemoveObstacle={handleRemoveObstacle}
+        regions={regions}
+        region={region}
+        onRegionChange={handleRegionChange}
+        regionStatus={regionStatus}
+        geo={geo}
+        heading={heading}
+        upcomingManeuver={upcomingManeuver}
+        distanceRemainingM={distanceRemainingM}
+        onSearch={handleSearch}
+        onSelectSearchResult={handleSelectSearchResult}
       />
       <MapView
         center={center}
-        mockLocation={displayLocation}
-        setMockLocation={setMockLocation}
+        currentLocation={displayLocation}
+        setCurrentLocation={setCurrentLocation}
+        heading={heading}
+        locationMode={locationMode}
+        flyTarget={flyTarget}
         running={running}
         destinations={destinations}
         onRemoveDestination={handleRemoveDestination}

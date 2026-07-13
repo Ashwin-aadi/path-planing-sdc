@@ -4,10 +4,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import config, state
 from app.astar import NoRouteFound, astar_route
 from app.graph_loader import (
-    dedup_edge_pairs, edge_latlon_coords, edges_in_bbox, get_graph, graph_bounds, nearest_edge, nearest_node,
+    dedup_edge_pairs, edge_latlon_coords, edges_in_bbox, get_graph, graph_bounds,
+    nearest_edge, nearest_node, nearest_region, region_graphml_ready,
 )
+from app.geocode import search as geocode_search
 from app.models import BlockRequest, LatLon, RouteRequest, RouteResponse, SetBlockRequest, Weights
 from app.traffic import congestion_factor
+
+
+def _region_or_400(region):
+    region = region or config.DEFAULT_REGION
+    if region not in config.REGIONS:
+        raise HTTPException(400, f"Unknown region '{region}'")
+    return region
+
 
 app = FastAPI(title="Path Planning Robotics — Phase 1 Routing API")
 
@@ -21,30 +31,54 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _warm_graph():
-    get_graph()  # build/load once at startup instead of on first request
+    get_graph(config.DEFAULT_REGION)  # build/load only the default region at startup;
+    # other regions build lazily on first use (see /api/regions "ready" flag).
+
+
+@app.get("/api/regions")
+def regions():
+    return {
+        "default": config.DEFAULT_REGION,
+        "regions": [
+            {
+                "id": region_id,
+                "label": r["label"],
+                "center": {"lat": r["center_lat"], "lon": r["center_lon"]},
+                "radius_m": r["radius_m"],
+                "ready": region_graphml_ready(region_id),
+            }
+            for region_id, r in config.REGIONS.items()
+        ],
+    }
 
 
 @app.get("/api/health")
-def health():
-    G = get_graph()
-    return {"status": "ok", "nodes": G.number_of_nodes(), "edges": G.number_of_edges()}
+def health(region: str = None):
+    region = _region_or_400(region)
+    G = get_graph(region)
+    return {"status": "ok", "region": region, "nodes": G.number_of_nodes(), "edges": G.number_of_edges()}
 
 
 @app.get("/api/graph/bounds")
-def bounds():
-    return graph_bounds()
+def bounds(region: str = None):
+    region = _region_or_400(region)
+    return graph_bounds(region)
 
 
 @app.get("/api/graph/edges")
-def edges(min_lat: float = None, max_lat: float = None, min_lon: float = None, max_lon: float = None):
+def edges(
+    min_lat: float = None, max_lat: float = None, min_lon: float = None, max_lon: float = None,
+    region: str = None,
+):
     """Dedupe (u,v)/(v,u) pairs of the same road into one line for rendering
     and road-blocking clicks; A* itself still respects true one-way direction.
     With bounds given, only returns roads in that box — the graph now covers
     too wide an area to ship the whole thing to the browser on every load."""
-    G = get_graph()
+    region = _region_or_400(region)
+    G = get_graph(region)
 
     if None not in (min_lat, max_lat, min_lon, max_lon):
-        refs = edges_in_bbox(min_lat, max_lat, min_lon, max_lon)
+        refs = edges_in_bbox(min_lat, max_lat, min_lon, max_lon, region=region)
     else:
         refs = [(u, v, k) for u, v, k, _ in dedup_edge_pairs(G).values()]
 
@@ -67,8 +101,9 @@ def edges(min_lat: float = None, max_lat: float = None, min_lon: float = None, m
 
 
 @app.get("/api/graph/nearest_edge")
-def nearest_edge_lookup(lat: float, lon: float):
-    result = nearest_edge(lat, lon)
+def nearest_edge_lookup(lat: float, lon: float, region: str = None):
+    region = _region_or_400(region)
+    result = nearest_edge(lat, lon, region=region)
     if result is None:
         raise HTTPException(404, "No roads in graph")
     dist_m, u, v, snap_lat, snap_lon = result
@@ -77,6 +112,38 @@ def nearest_edge_lookup(lat: float, lon: float):
         "dist_m": round(dist_m, 1),
         "snapped": {"lat": snap_lat, "lon": snap_lon},
     }
+
+
+@app.get("/api/nearest_region")
+def nearest_region_lookup(lat: float, lon: float):
+    """Which configured region a real GPS fix falls closest to — lets the
+    frontend auto-switch maps when live location is used somewhere other
+    than whichever region is currently loaded."""
+    region_id, dist_m = nearest_region(lat, lon)
+    r = config.REGIONS[region_id]
+    return {
+        "region": region_id,
+        "label": r["label"],
+        "dist_to_center_m": round(dist_m, 1),
+        "within_coverage": dist_m <= r["radius_m"],
+        "ready": region_graphml_ready(region_id),
+    }
+
+
+@app.get("/api/geocode")
+def geocode(q: str, region: str = None):
+    """Place-name search (free, via OSM Nominatim — see app/geocode.py),
+    biased toward whichever region is currently loaded."""
+    region = _region_or_400(region)
+    q = q.strip()
+    if not q:
+        return {"results": []}
+    r = config.REGIONS[region]
+    try:
+        results = geocode_search(q, region=(r["center_lat"], r["center_lon"], r["radius_m"]))
+    except Exception as e:
+        raise HTTPException(502, f"Geocoding service unavailable: {e}")
+    return {"results": results}
 
 
 @app.get("/api/blocks")
@@ -104,7 +171,8 @@ def clear_blocks():
 
 @app.post("/api/route", response_model=RouteResponse)
 def route(req: RouteRequest):
-    G = get_graph()
+    region = _region_or_400(req.region)
+    G = get_graph(region)
 
     weights = config.EMERGENCY_WEIGHTS if req.emergency else req.weights.model_dump()
     total = sum(weights.values())
@@ -115,7 +183,7 @@ def route(req: RouteRequest):
     cf = congestion_factor()
 
     stops = [req.start] + req.waypoints
-    snapped = [nearest_node(p.lat, p.lon) for p in stops]  # [(node_id, snap_dist), ...]
+    snapped = [nearest_node(p.lat, p.lon, region=region) for p in stops]  # [(node_id, snap_dist), ...]
 
     full_coords = []
     distance_m = 0.0

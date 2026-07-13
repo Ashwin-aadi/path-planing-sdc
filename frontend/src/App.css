@@ -77,6 +77,90 @@
   cursor: not-allowed;
 }
 
+.region-select {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+}
+
+.gps-status {
+  margin-top: 8px;
+}
+
+.direction-hint {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.search-row {
+  display: flex;
+  gap: 6px;
+}
+
+.search-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+}
+
+.search-row button {
+  padding: 8px 12px;
+  font-size: 12.5px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.search-row button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.search-results {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.search-result-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.search-results li:last-child .search-result-item {
+  border-bottom: none;
+}
+
+.search-result-item:hover {
+  background: var(--accent);
+  color: white;
+}
+
 .slider-row {
   margin-bottom: 14px;
 }
