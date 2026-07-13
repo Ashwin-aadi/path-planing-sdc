@@ -1,0 +1,167 @@
+.app {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+.panel {
+  width: 340px;
+  flex-shrink: 0;
+  background: var(--panel-bg);
+  border-right: 1px solid var(--border);
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.panel h1 {
+  font-size: 20px;
+  margin: 0 0 2px;
+}
+
+.subtitle {
+  color: var(--text);
+  opacity: 0.65;
+  font-size: 12.5px;
+  margin-bottom: 20px;
+}
+
+.panel section {
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel section:last-child {
+  border-bottom: none;
+}
+
+.panel h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+  margin-bottom: 10px;
+}
+
+.hint {
+  font-size: 12.5px;
+  opacity: 0.65;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.toggle-row {
+  display: flex;
+  gap: 6px;
+}
+
+.toggle-btn {
+  flex: 1;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.toggle-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.toggle-btn.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.slider-row {
+  margin-bottom: 14px;
+}
+
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+
+.slider-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.slider-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.slider-row input[type="range"]:disabled {
+  opacity: 0.4;
+}
+
+.emergency-btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #dc2626;
+  background: transparent;
+  color: #dc2626;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.emergency-btn.active {
+  background: #dc2626;
+  color: white;
+}
+
+.secondary-btn {
+  width: 100%;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+
+.secondary-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.stats {
+  margin-top: 4px;
+}
+
+.error {
+  color: #dc2626;
+  font-size: 12.5px;
+}
+
+.map {
+  flex: 1;
+  height: 100%;
+  width: 100%;
+}
+
+.map-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

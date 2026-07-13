@@ -50,3 +50,7 @@ SAFETY_PENALTY = {
     "service": 0.7,
 }
 FALLBACK_SAFETY_PENALTY = 0.5
+
+# Emergency mode overrides slider weights entirely: fastest ETA with
+# meaningful regard for road safety, no bias toward raw speed-limit class.
+EMERGENCY_WEIGHTS = {"speed": 0.0, "time": 0.6, "safety": 0.4}
