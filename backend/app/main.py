@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import config, state
 from app.astar import NoRouteFound, astar_route
 from app.graph_loader import (
-    edge_latlon_coords, get_graph, graph_bounds, haversine_m, nearest_edge, nearest_node,
+    dedup_edge_pairs, edge_latlon_coords, get_graph, graph_bounds, nearest_edge, nearest_node,
 )
 from app.models import BlockRequest, LatLon, RouteRequest, RouteResponse, SetBlockRequest, Weights
 
@@ -39,13 +39,7 @@ def edges():
     """Dedupe (u,v)/(v,u) pairs of the same road into one line for rendering
     and road-blocking clicks; A* itself still respects true one-way direction."""
     G = get_graph()
-    # Prefer whichever direction of a two-way pair actually carries geometry,
-    # instead of whatever direction the edge iterator happens to see first.
-    chosen = {}
-    for u, v, k, d in G.edges(keys=True, data=True):
-        pair = frozenset((u, v))
-        if pair not in chosen or (d.get("geometry") is not None and chosen[pair][3].get("geometry") is None):
-            chosen[pair] = (u, v, k, d)
+    chosen = dedup_edge_pairs(G)
 
     features = []
     for pair, (u, v, k, d) in chosen.items():

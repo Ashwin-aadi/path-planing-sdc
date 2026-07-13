@@ -3,7 +3,7 @@
 # MNNIT Allahabad (Motilal Nehru National Institute of Technology), Prayagraj, India
 CENTER_LAT = 25.4926
 CENTER_LON = 81.8662
-GRAPH_RADIUS_M = 10000  # 10km radius drivable network around campus
+GRAPH_RADIUS_M = 20000  # 20km radius drivable network around campus
 
 CACHE_DIR = "./osm_cache"
 GRAPHML_PATH = "./osm_cache/mnnit_area.graphml"

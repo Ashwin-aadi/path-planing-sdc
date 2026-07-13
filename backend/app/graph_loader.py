@@ -6,7 +6,8 @@ import os
 
 import networkx as nx
 import osmnx as ox
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, box
+from shapely.strtree import STRtree
 
 from app import config
 
@@ -22,6 +23,8 @@ MAX_SPEED_KPH = REF_SPEED_KPH
 FLOOR_FRACTION = 0.05
 
 _graph = None
+_node_index = None  # (STRtree, [node_id, ...]) aligned by position
+_edge_index = None  # (STRtree, [(u, v, key), ...]) aligned by position
 
 
 def _first(value):
@@ -99,10 +102,44 @@ def _build_graph():
     return G
 
 
+def dedup_edge_pairs(G):
+    """One representative (u, v, key, data) per undirected road pair,
+    preferring whichever direction actually carries a real (curved)
+    geometry. Shared by the spatial index and the /api/graph/edges route
+    so both agree on exactly which direction represents each road."""
+    chosen = {}
+    for u, v, k, d in G.edges(keys=True, data=True):
+        pair = frozenset((u, v))
+        if pair not in chosen or (d.get("geometry") is not None and chosen[pair][3].get("geometry") is None):
+            chosen[pair] = (u, v, k, d)
+    return chosen
+
+
+def _build_spatial_indexes(G):
+    node_ids = list(G.nodes())
+    node_geoms = [Point(G.nodes[n]["x"], G.nodes[n]["y"]) for n in node_ids]
+    node_index = (STRtree(node_geoms), node_ids)
+
+    edge_geoms, edge_refs = [], []
+    for u, v, k, d in dedup_edge_pairs(G).values():
+        geom = d.get("geometry")
+        if geom is None:
+            geom = LineString([
+                (G.nodes[u]["x"], G.nodes[u]["y"]),
+                (G.nodes[v]["x"], G.nodes[v]["y"]),
+            ])
+        edge_geoms.append(geom)
+        edge_refs.append((u, v, k))
+    edge_index = (STRtree(edge_geoms), edge_geoms, edge_refs)
+
+    return node_index, edge_index
+
+
 def get_graph():
-    global _graph
+    global _graph, _node_index, _edge_index
     if _graph is None:
         _graph = _build_graph()
+        _node_index, _edge_index = _build_spatial_indexes(_graph)
     return _graph
 
 
@@ -116,16 +153,15 @@ def haversine_m(lat1, lon1, lat2, lon2):
 
 
 def nearest_node(lat, lon):
-    """Brute-force nearest node by haversine distance. The graph is small
-    (~6k nodes) so a linear scan is fast enough and avoids requiring
-    scikit-learn just for a KD-tree lookup."""
-    G = get_graph()
-    best_node, best_dist = None, float("inf")
-    for node_id, d in G.nodes(data=True):
-        dist = haversine_m(lat, lon, d["y"], d["x"])
-        if dist < best_dist:
-            best_node, best_dist = node_id, dist
-    return best_node, best_dist
+    """Nearest node via an R-tree spatial index (STRtree) — avoids a
+    linear scan over every node on each lookup, which stops scaling once
+    the graph covers more than a small neighborhood."""
+    get_graph()
+    tree, node_ids = _node_index
+    idx = tree.nearest(Point(lon, lat))
+    node_id = node_ids[idx]
+    d = _graph.nodes[node_id]
+    return node_id, haversine_m(lat, lon, d["y"], d["x"])
 
 
 def edge_latlon_coords(G, u, v, key):
@@ -143,33 +179,22 @@ def edge_latlon_coords(G, u, v, key):
 
 
 def nearest_edge(lat, lon):
-    """Snap a click point to the nearest road (for obstacle placement),
-    brute force over the deduped undirected pairs. Returns
+    """Snap a click point to the nearest road (for obstacle placement) via
+    an R-tree spatial index over the deduped undirected pairs. Returns
     (dist_m, u, v, snapped_lat, snapped_lon) or None if the graph is empty."""
-    G = get_graph()
+    get_graph()
+    tree, geoms, refs = _edge_index
+    if not geoms:
+        return None
+
     pt = Point(lon, lat)
-    seen = set()
-    best = None
+    idx = tree.nearest(pt)
+    geom = geoms[idx]
+    u, v, k = refs[idx]
 
-    for u, v, k, d in G.edges(keys=True, data=True):
-        pair = frozenset((u, v))
-        if pair in seen:
-            continue
-        seen.add(pair)
-
-        geom = d.get("geometry")
-        if geom is None:
-            geom = LineString([
-                (G.nodes[u]["x"], G.nodes[u]["y"]),
-                (G.nodes[v]["x"], G.nodes[v]["y"]),
-            ])
-
-        nearest_pt = geom.interpolate(geom.project(pt))
-        dist_m = haversine_m(lat, lon, nearest_pt.y, nearest_pt.x)
-        if best is None or dist_m < best[0]:
-            best = (dist_m, u, v, nearest_pt.y, nearest_pt.x)
-
-    return best
+    nearest_pt = geom.interpolate(geom.project(pt))
+    dist_m = haversine_m(lat, lon, nearest_pt.y, nearest_pt.x)
+    return dist_m, u, v, nearest_pt.y, nearest_pt.x
 
 
 def graph_bounds():
