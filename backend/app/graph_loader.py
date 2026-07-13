@@ -193,6 +193,13 @@ def _build_spatial_indexes(G):
 def get_graph(region=None):
     region = region or config.DEFAULT_REGION
     if region not in _graphs:
+        # Free-tier hosting has limited RAM — keep only one region's graph
+        # (plus its spatial indexes) resident at a time. Switching regions
+        # reloads from the on-disk graphml cache (fast) rather than a full
+        # rebuild, so this only costs a couple seconds, not correctness.
+        _graphs.clear()
+        _node_indexes.clear()
+        _edge_indexes.clear()
         G = _build_graph(region)
         _graphs[region] = G
         _node_indexes[region], _edge_indexes[region] = _build_spatial_indexes(G)
