@@ -7,6 +7,7 @@ from app.graph_loader import (
     dedup_edge_pairs, edge_latlon_coords, edges_in_bbox, get_graph, graph_bounds, nearest_edge, nearest_node,
 )
 from app.models import BlockRequest, LatLon, RouteRequest, RouteResponse, SetBlockRequest, Weights
+from app.traffic import congestion_factor
 
 app = FastAPI(title="Path Planning Robotics — Phase 1 Routing API")
 
@@ -111,12 +112,15 @@ def route(req: RouteRequest):
         raise HTTPException(400, "At least one weight must be > 0")
     weights = {k: v / total for k, v in weights.items()}
 
+    cf = congestion_factor()
+
     stops = [req.start] + req.waypoints
     snapped = [nearest_node(p.lat, p.lon) for p in stops]  # [(node_id, snap_dist), ...]
 
     full_coords = []
     distance_m = 0.0
     eta_s = 0.0
+    traffic_delay_s = 0.0
     compute_ms = 0.0
     nodes_expanded = 0
     leg_distances_m = []
@@ -126,7 +130,7 @@ def route(req: RouteRequest):
         leg_end = snapped[leg + 1][0]
         try:
             node_path, edge_keys, stats = astar_route(
-                G, leg_start, leg_end, weights, blocked=state.blocked_edges
+                G, leg_start, leg_end, weights, blocked=state.blocked_edges, congestion_factor=cf
             )
         except NoRouteFound:
             raise HTTPException(
@@ -141,8 +145,13 @@ def route(req: RouteRequest):
             u, v = node_path[i], node_path[i + 1]
             k = edge_keys[i]
             d = G[u][v][k]
+            # Reported ETA always reflects current time-of-day congestion,
+            # regardless of how the Traffic slider is weighted for route
+            # choice — same real-vs-preference split as Google Maps' ETA.
+            edge_delay = d["traffic_base_s"] * cf
             distance_m += d["length"]
-            eta_s += d["travel_time_s"]
+            eta_s += d["travel_time_s"] + edge_delay
+            traffic_delay_s += edge_delay
             leg_distance += d["length"]
 
             seg = edge_latlon_coords(G, u, v, k)
@@ -169,4 +178,6 @@ def route(req: RouteRequest):
         snap_dist_start_m=round(start_snap_dist, 1),
         snap_dist_end_m=round(end_snap_dist, 1),
         leg_distances_m=leg_distances_m,
+        traffic_delay_s=round(traffic_delay_s, 1),
+        congestion_factor=cf,
     )

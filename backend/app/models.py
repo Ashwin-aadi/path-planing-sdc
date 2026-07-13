@@ -12,6 +12,8 @@ class Weights(BaseModel):
     speed: float = Field(ge=0)
     time: float = Field(ge=0)
     safety: float = Field(ge=0)
+    traffic: float = Field(ge=0)
+    economy: float = Field(ge=0)
 
 
 class RouteRequest(BaseModel):
@@ -44,3 +46,5 @@ class RouteResponse(BaseModel):
     snap_dist_start_m: float
     snap_dist_end_m: float
     leg_distances_m: list[float]
+    traffic_delay_s: float
+    congestion_factor: float

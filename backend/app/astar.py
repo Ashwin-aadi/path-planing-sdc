@@ -15,33 +15,40 @@ class NoRouteFound(Exception):
     pass
 
 
-def edge_weight(data, weights):
-    """Blend the three preference costs (all already expressed in seconds)
-    plus the fixed floor that guarantees a positive, admissible cost."""
+def edge_weight(data, weights, congestion_factor):
+    """Blend the five preference costs (all already expressed in seconds)
+    plus the fixed floor that guarantees a positive, admissible cost.
+    Traffic is the only time-varying term — traffic_base_s is precomputed
+    per edge, scaled here by the current time-of-day congestion factor."""
     return (
         data["floor_s"]
         + weights["time"] * data["travel_time_s"]
         + weights["speed"] * data["speed_cost_s"]
         + weights["safety"] * data["safety_cost_s"]
+        + weights["traffic"] * data["traffic_base_s"] * congestion_factor
+        + weights["economy"] * data["economy_cost_s"]
     )
 
 
-def _best_parallel_edge_cost(G, u, v, weights, blocked):
+def _best_parallel_edge_cost(G, u, v, weights, blocked, congestion_factor):
     """A MultiDiGraph can have >1 edge between the same u,v; use the
     cheapest one under current weights (ties broken arbitrarily)."""
     if blocked and frozenset((u, v)) in blocked:
         return None, None
     best_key, best_cost = None, None
     for k, data in G[u][v].items():
-        cost = edge_weight(data, weights)
+        cost = edge_weight(data, weights, congestion_factor)
         if best_cost is None or cost < best_cost:
             best_key, best_cost = k, cost
     return best_key, best_cost
 
 
-def astar_route(G, start, goal, weights, blocked=None):
-    """weights: dict with 'time', 'speed', 'safety' keys summing to 1.
-    blocked: set of frozenset({u, v}) pairs to treat as impassable.
+def astar_route(G, start, goal, weights, blocked=None, congestion_factor=0.0):
+    """weights: dict with 'time', 'speed', 'safety', 'traffic', 'economy'
+    keys summing to 1. blocked: set of frozenset({u, v}) pairs to treat as
+    impassable. congestion_factor: current time-of-day traffic scalar in
+    [0, 1] (see app/traffic.py) — only affects routing when the traffic
+    weight is > 0, since it only scales the traffic cost term.
     Returns (node_path, edge_keys, stats) or raises NoRouteFound."""
     t0 = time.perf_counter()
 
@@ -71,7 +78,7 @@ def astar_route(G, start, goal, weights, blocked=None):
         for v in G[u]:
             if v in visited:
                 continue
-            key, cost = _best_parallel_edge_cost(G, u, v, weights, blocked)
+            key, cost = _best_parallel_edge_cost(G, u, v, weights, blocked, congestion_factor)
             if cost is None:
                 continue
             tentative = g_score[u] + cost

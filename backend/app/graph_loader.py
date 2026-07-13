@@ -10,6 +10,7 @@ from shapely.geometry import LineString, Point, box
 from shapely.strtree import STRtree
 
 from app import config
+from app.elevation import fetch_elevations
 
 # Fastest road class defines the reference speed used to convert every
 # preference (speed/safety) into an equivalent-time cost, in seconds.
@@ -50,6 +51,32 @@ def _prune_to_largest_scc(G):
     return G.subgraph(largest).copy()
 
 
+_EDGE_FLOAT_ATTRS = (
+    "length", "speed_kph", "travel_time_s", "speed_cost_s", "safety_cost_s",
+    "safety_penalty", "floor_s", "grade", "economy_cost_s",
+    "traffic_susceptibility", "traffic_base_s",
+)
+
+
+def _add_elevation(G):
+    """Fetch elevation for every node (Open-Elevation, free/no key) and
+    store it as a node attribute. Falls back to flat terrain (elevation=0
+    everywhere, so grade/economy costs become neutral) if the free API is
+    unreachable — slope is a nice-to-have, not something worth breaking
+    graph loading over."""
+    node_ids = list(G.nodes())
+    coords = [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in node_ids]
+    try:
+        elevations = fetch_elevations(coords)
+        print(f"[elevation] fetched {len(node_ids)} node elevations from Open-Elevation")
+    except Exception as e:
+        print(f"[elevation] fetch failed ({e}); falling back to flat terrain")
+        elevations = [0.0] * len(node_ids)
+    for n, elev in zip(node_ids, elevations):
+        G.nodes[n]["elevation"] = elev
+    return G
+
+
 def _build_graph():
     os.makedirs(config.CACHE_DIR, exist_ok=True)
     ox.settings.use_cache = True
@@ -60,13 +87,14 @@ def _build_graph():
         # graphml round-trips numeric attrs as strings; osmnx's loader restores
         # the well-known ones, but our custom cost attrs need re-typing.
         for _, _, d in G.edges(data=True):
-            for key in ("length", "speed_kph", "travel_time_s", "speed_cost_s",
-                        "safety_cost_s", "safety_penalty", "floor_s"):
+            for key in _EDGE_FLOAT_ATTRS:
                 if key in d:
                     d[key] = float(d[key])
         for _, d in G.nodes(data=True):
             d["y"] = float(d["y"])
             d["x"] = float(d["x"])
+            if "elevation" in d:
+                d["elevation"] = float(d["elevation"])
         return _prune_to_largest_scc(G)
 
     G = ox.graph_from_point(
@@ -80,6 +108,9 @@ def _build_graph():
     )
     G = ox.routing.add_edge_travel_times(G)
 
+    G = _prune_to_largest_scc(G)
+    G = _add_elevation(G)
+
     for u, v, d in G.edges(data=True):
         hwy = _first(d.get("highway"))
         length_m = float(d["length"])
@@ -87,17 +118,32 @@ def _build_graph():
 
         safety_penalty = config.SAFETY_PENALTY.get(hwy, config.FALLBACK_SAFETY_PENALTY)
         speed_penalty = max(0.0, 1.0 - speed_kph / MAX_SPEED_KPH)
+        traffic_susceptibility = config.TRAFFIC_SUSCEPTIBILITY.get(hwy, config.FALLBACK_TRAFFIC_SUSCEPTIBILITY)
+        stop_penalty = config.ECONOMY_STOP_PENALTY.get(hwy, config.FALLBACK_ECONOMY_STOP_PENALTY)
+
+        elev_u = G.nodes[u].get("elevation", 0.0)
+        elev_v = G.nodes[v].get("elevation", 0.0)
+        grade = (elev_v - elev_u) / length_m if length_m > 0 else 0.0
+        speed_dev = (speed_kph - config.ECONOMY_OPTIMAL_SPEED_KPH) / config.ECONOMY_OPTIMAL_SPEED_KPH
+        economy_penalty = speed_dev ** 2 + stop_penalty + max(0.0, grade) * config.ECONOMY_SLOPE_FACTOR
+
+        travel_time_s = float(d["travel_time"])
 
         d["highway"] = hwy or "unclassified"
         d["speed_kph"] = speed_kph
-        d["travel_time_s"] = float(d["travel_time"])
+        d["travel_time_s"] = travel_time_s
         d["safety_penalty"] = safety_penalty
         d["speed_cost_s"] = length_m * speed_penalty / REF_SPEED_MPS
         d["safety_cost_s"] = length_m * safety_penalty / REF_SPEED_MPS
         d["floor_s"] = FLOOR_FRACTION * length_m / REF_SPEED_MPS
+        d["grade"] = grade
+        d["economy_cost_s"] = length_m * economy_penalty / REF_SPEED_MPS
+        d["traffic_susceptibility"] = traffic_susceptibility
+        # Static part of the traffic cost; multiplied by the request-time
+        # congestion_factor(hour) in astar.edge_weight — see config.py.
+        d["traffic_base_s"] = travel_time_s * traffic_susceptibility * config.TRAFFIC_IMPACT
         d.pop("travel_time", None)
 
-    G = _prune_to_largest_scc(G)
     ox.save_graphml(G, config.GRAPHML_PATH)
     return G
 
