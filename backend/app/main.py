@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -30,9 +32,12 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def _warm_graph():
-    get_graph(config.DEFAULT_REGION)  # build/load only the default region at startup;
-    # other regions build lazily on first use (see /api/regions "ready" flag).
+async def _warm_graph():
+    # Fire-and-forget in a background thread — loading/parsing an 80MB+
+    # graphml (even from cache) can take a while on a slow/throttled CPU,
+    # and must never block uvicorn from binding its port. Render's health
+    # check (see below) doesn't depend on this finishing.
+    asyncio.create_task(asyncio.to_thread(get_graph, config.DEFAULT_REGION))
 
 
 @app.get("/api/regions")
@@ -53,10 +58,12 @@ def regions():
 
 
 @app.get("/api/health")
-def health(region: str = None):
-    region = _region_or_400(region)
-    G = get_graph(region)
-    return {"status": "ok", "region": region, "nodes": G.number_of_nodes(), "edges": G.number_of_edges()}
+def health():
+    # Pure liveness check — deliberately never touches the graph, so it
+    # always answers instantly regardless of load/build state. That's what
+    # Render's port scan and healthCheckPath probe, and what the keep-alive
+    # workflow pings; none of them should ever wait on a graph load.
+    return {"status": "ok"}
 
 
 @app.get("/api/graph/bounds")
