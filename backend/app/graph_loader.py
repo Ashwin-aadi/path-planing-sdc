@@ -197,6 +197,18 @@ def nearest_edge(lat, lon):
     return dist_m, u, v, nearest_pt.y, nearest_pt.x
 
 
+def edges_in_bbox(min_lat, max_lat, min_lon, max_lon):
+    """Road pairs (u, v, key) whose geometry falls in the given lat/lon box,
+    via the edge R-tree. Lets the frontend load only what's on screen
+    instead of the whole graph, which stops scaling once the map covers
+    a wide area."""
+    get_graph()
+    tree, geoms, refs = _edge_index
+    query_box = box(min_lon, min_lat, max_lon, max_lat)
+    idxs = tree.query(query_box)
+    return [refs[i] for i in idxs]
+
+
 def graph_bounds():
     G = get_graph()
     lats = [d["y"] for _, d in G.nodes(data=True)]

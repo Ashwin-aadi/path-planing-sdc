@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import config, state
 from app.astar import NoRouteFound, astar_route
 from app.graph_loader import (
-    dedup_edge_pairs, edge_latlon_coords, get_graph, graph_bounds, nearest_edge, nearest_node,
+    dedup_edge_pairs, edge_latlon_coords, edges_in_bbox, get_graph, graph_bounds, nearest_edge, nearest_node,
 )
 from app.models import BlockRequest, LatLon, RouteRequest, RouteResponse, SetBlockRequest, Weights
 
@@ -35,14 +35,21 @@ def bounds():
 
 
 @app.get("/api/graph/edges")
-def edges():
+def edges(min_lat: float = None, max_lat: float = None, min_lon: float = None, max_lon: float = None):
     """Dedupe (u,v)/(v,u) pairs of the same road into one line for rendering
-    and road-blocking clicks; A* itself still respects true one-way direction."""
+    and road-blocking clicks; A* itself still respects true one-way direction.
+    With bounds given, only returns roads in that box — the graph now covers
+    too wide an area to ship the whole thing to the browser on every load."""
     G = get_graph()
-    chosen = dedup_edge_pairs(G)
+
+    if None not in (min_lat, max_lat, min_lon, max_lon):
+        refs = edges_in_bbox(min_lat, max_lat, min_lon, max_lon)
+    else:
+        refs = [(u, v, k) for u, v, k, _ in dedup_edge_pairs(G).values()]
 
     features = []
-    for pair, (u, v, k, d) in chosen.items():
+    for u, v, k in refs:
+        d = G[u][v][k]
         coords = [[round(lon, 6), round(lat, 6)] for lat, lon in edge_latlon_coords(G, u, v, k)]
 
         features.append({
@@ -50,7 +57,7 @@ def edges():
             "properties": {
                 "u": u, "v": v,
                 "highway": d.get("highway"),
-                "blocked": pair in state.blocked_edges,
+                "blocked": frozenset((u, v)) in state.blocked_edges,
             },
             "geometry": {"type": "LineString", "coordinates": coords},
         })

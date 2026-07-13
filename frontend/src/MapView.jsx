@@ -58,6 +58,41 @@ function MapClickHandler({ onMapClick }) {
   return null;
 }
 
+function boundsToBox(leafletBounds) {
+  return {
+    min_lat: leafletBounds.getSouth(), max_lat: leafletBounds.getNorth(),
+    min_lon: leafletBounds.getWest(), max_lon: leafletBounds.getEast(),
+  };
+}
+
+function contains(outer, inner) {
+  return (
+    inner.min_lat >= outer.min_lat && inner.max_lat <= outer.max_lat &&
+    inner.min_lon >= outer.min_lon && inner.max_lon <= outer.max_lon
+  );
+}
+
+function BoundsWatcher({ onBoundsChange }) {
+  const loadedRef = useRef(null);
+
+  const maybeFetch = (map) => {
+    const view = boundsToBox(map.getBounds());
+    if (loadedRef.current && contains(loadedRef.current, view)) return;
+    const padded = boundsToBox(map.getBounds().pad(0.3));
+    loadedRef.current = padded;
+    onBoundsChange(padded);
+  };
+
+  const map = useMapEvents({
+    moveend: () => maybeFetch(map),
+  });
+  useEffect(() => {
+    maybeFetch(map);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
 function edgeKey(u, v) {
   return u < v ? `${u}_${v}` : `${v}_${u}`;
 }
@@ -72,7 +107,9 @@ export default function MapView({
   obstacles,
   onRemoveObstacle,
   onMapClick,
+  onBoundsChange,
   edgesGeoJson,
+  edgesKey,
   blockedSet,
   onRoadRightClick,
   routeCoords,
@@ -130,9 +167,11 @@ export default function MapView({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <MapClickHandler onMapClick={onMapClick} />
+      <BoundsWatcher onBoundsChange={onBoundsChange} />
 
       {edgesGeoJson && (
         <GeoJSON
+          key={edgesKey}
           ref={geoJsonRef}
           data={edgesGeoJson}
           style={styleFn}

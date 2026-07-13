@@ -15,8 +15,11 @@ export function getBounds() {
   return fetch(`${BASE}/api/graph/bounds`).then(asJson);
 }
 
-export function getEdges() {
-  return fetch(`${BASE}/api/graph/edges`).then(asJson);
+export function getEdges(bounds) {
+  const q = bounds
+    ? `?min_lat=${bounds.min_lat}&max_lat=${bounds.max_lat}&min_lon=${bounds.min_lon}&max_lon=${bounds.max_lon}`
+    : "";
+  return fetch(`${BASE}/api/graph/edges${q}`).then(asJson);
 }
 
 export function getBlocks() {

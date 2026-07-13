@@ -26,7 +26,10 @@ function App() {
   const nextObstacleId = useRef(1);
 
   const [edgesGeoJson, setEdgesGeoJson] = useState(null);
+  const [edgesKey, setEdgesKey] = useState(0);
+  const [mapBounds, setMapBounds] = useState(null);
   const [blockedSet, setBlockedSet] = useState(new Set());
+  const edgesFetchSeq = useRef(0);
 
   const [weights, setWeights] = useState({ speed: 33, time: 34, safety: 33 });
   const [emergency, setEmergency] = useState(false);
@@ -52,15 +55,30 @@ function App() {
       setCenter(b.center);
       setMockLocation(b.center);
     });
-    getEdges().then((fc) => {
-      setEdgesGeoJson(fc);
-      const blocked = new Set();
-      for (const f of fc.features) {
-        if (f.properties.blocked) blocked.add(edgeKey(f.properties.u, f.properties.v));
-      }
-      setBlockedSet(blocked);
-    });
   }, []);
+
+  // The graph now spans a wide area, so only the roads visible in the
+  // current viewport (plus padding) are fetched — re-fetched whenever the
+  // map settles after a pan/zoom. A sequence guard drops stale responses
+  // if a fetch from an earlier viewport resolves after a newer one.
+  useEffect(() => {
+    if (!mapBounds) return;
+    const mySeq = ++edgesFetchSeq.current;
+    getEdges(mapBounds).then((fc) => {
+      if (edgesFetchSeq.current !== mySeq) return;
+      setEdgesGeoJson(fc);
+      setEdgesKey((k) => k + 1);
+      setBlockedSet((prev) => {
+        const next = new Set(prev);
+        for (const f of fc.features) {
+          const key = edgeKey(f.properties.u, f.properties.v);
+          if (f.properties.blocked) next.add(key);
+          else next.delete(key);
+        }
+        return next;
+      });
+    });
+  }, [mapBounds]);
 
   const effectiveWeights = emergency ? EMERGENCY_WEIGHTS : weights;
 
@@ -349,7 +367,9 @@ function App() {
         obstacles={obstacles}
         onRemoveObstacle={handleRemoveObstacle}
         onMapClick={handleMapClick}
+        onBoundsChange={setMapBounds}
         edgesGeoJson={edgesGeoJson}
+        edgesKey={edgesKey}
         blockedSet={blockedSet}
         onRoadRightClick={handleRoadRightClick}
         routeCoords={routeCoords}
