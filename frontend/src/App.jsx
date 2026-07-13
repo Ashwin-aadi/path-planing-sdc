@@ -22,6 +22,7 @@ function edgeKey(u, v) {
 function App() {
   const [center, setCenter] = useState(null);
   const [currentLocation, setCurrentLocation] = useState(null);
+  const [panelOpen, setPanelOpen] = useState(false); // mobile only — panel is an overlay there, see App.css
   const [destinations, setDestinations] = useState([]);
   const nextDestId = useRef(1);
 
@@ -290,6 +291,7 @@ function App() {
   const handleRun = () => {
     if (running || !routeData || destinations.length === 0 || !currentLocation || locationMode !== "mock") return;
     setMode("addObstacle");
+    setPanelOpen(false); // no-op on desktop; on mobile, show the map while driving
     startSimFromRoute(routeData, destinations, currentLocation);
   };
 
@@ -428,6 +430,7 @@ function App() {
   const handleSelectSearchResult = ({ lat, lon }) => {
     setFlyTarget({ lat, lon, seq: ++flySeqRef.current });
     handleMapClick({ lat, lon });
+    setPanelOpen(false); // no-op on desktop; on mobile, reveal the map so the pick is visible
   };
 
   const routeCoords = useMemo(() => routeData?.path, [routeData]);
@@ -466,7 +469,14 @@ function App() {
   const heading = locationMode === "real" ? geo.heading : running ? simHeading : null;
 
   return (
-    <div className="app">
+    <div className={panelOpen ? "app panel-open" : "app"}>
+      <button
+        className="mobile-panel-toggle"
+        onClick={() => setPanelOpen((o) => !o)}
+        aria-label={panelOpen ? "Close controls" : "Open controls"}
+      >
+        {panelOpen ? "✕" : "☰"}
+      </button>
       <ControlPanel
         weights={weights}
         setWeights={setWeights}
