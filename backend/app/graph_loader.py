@@ -6,6 +6,7 @@ import os
 
 import networkx as nx
 import osmnx as ox
+from shapely.geometry import LineString, Point
 
 from app import config
 
@@ -120,6 +121,36 @@ def edge_latlon_coords(G, u, v, key):
         (G.nodes[u]["y"], G.nodes[u]["x"]),
         (G.nodes[v]["y"], G.nodes[v]["x"]),
     ]
+
+
+def nearest_edge(lat, lon):
+    """Snap a click point to the nearest road (for obstacle placement),
+    brute force over the deduped undirected pairs. Returns
+    (dist_m, u, v, snapped_lat, snapped_lon) or None if the graph is empty."""
+    G = get_graph()
+    pt = Point(lon, lat)
+    seen = set()
+    best = None
+
+    for u, v, k, d in G.edges(keys=True, data=True):
+        pair = frozenset((u, v))
+        if pair in seen:
+            continue
+        seen.add(pair)
+
+        geom = d.get("geometry")
+        if geom is None:
+            geom = LineString([
+                (G.nodes[u]["x"], G.nodes[u]["y"]),
+                (G.nodes[v]["x"], G.nodes[v]["y"]),
+            ])
+
+        nearest_pt = geom.interpolate(geom.project(pt))
+        dist_m = haversine_m(lat, lon, nearest_pt.y, nearest_pt.x)
+        if best is None or dist_m < best[0]:
+            best = (dist_m, u, v, nearest_pt.y, nearest_pt.x)
+
+    return best
 
 
 def graph_bounds():

@@ -3,8 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import config, state
 from app.astar import NoRouteFound, astar_route
-from app.graph_loader import edge_latlon_coords, get_graph, graph_bounds, haversine_m, nearest_node
-from app.models import BlockRequest, LatLon, RouteRequest, RouteResponse, Weights
+from app.graph_loader import (
+    edge_latlon_coords, get_graph, graph_bounds, haversine_m, nearest_edge, nearest_node,
+)
+from app.models import BlockRequest, LatLon, RouteRequest, RouteResponse, SetBlockRequest, Weights
 
 app = FastAPI(title="Path Planning Robotics — Phase 1 Routing API")
 
@@ -62,6 +64,19 @@ def edges():
     return {"type": "FeatureCollection", "features": features}
 
 
+@app.get("/api/graph/nearest_edge")
+def nearest_edge_lookup(lat: float, lon: float):
+    result = nearest_edge(lat, lon)
+    if result is None:
+        raise HTTPException(404, "No roads in graph")
+    dist_m, u, v, snap_lat, snap_lon = result
+    return {
+        "u": u, "v": v,
+        "dist_m": round(dist_m, 1),
+        "snapped": {"lat": snap_lat, "lon": snap_lon},
+    }
+
+
 @app.get("/api/blocks")
 def list_blocks():
     return {"blocked": [{"u": u, "v": v} for u, v in state.as_list()]}
@@ -70,6 +85,12 @@ def list_blocks():
 @app.post("/api/blocks/toggle")
 def toggle_block(req: BlockRequest):
     now_blocked = state.toggle(req.u, req.v)
+    return {"u": req.u, "v": req.v, "blocked": now_blocked}
+
+
+@app.post("/api/blocks/set")
+def set_block(req: SetBlockRequest):
+    now_blocked = state.set_blocked(req.u, req.v, req.blocked)
     return {"u": req.u, "v": req.v, "blocked": now_blocked}
 
 
@@ -97,6 +118,7 @@ def route(req: RouteRequest):
     eta_s = 0.0
     compute_ms = 0.0
     nodes_expanded = 0
+    leg_distances_m = []
 
     for leg in range(len(snapped) - 1):
         leg_start = snapped[leg][0]
@@ -112,6 +134,7 @@ def route(req: RouteRequest):
 
         compute_ms += stats["compute_ms"]
         nodes_expanded += stats["nodes_expanded"]
+        leg_distance = 0.0
 
         for i in range(len(node_path) - 1):
             u, v = node_path[i], node_path[i + 1]
@@ -119,11 +142,14 @@ def route(req: RouteRequest):
             d = G[u][v][k]
             distance_m += d["length"]
             eta_s += d["travel_time_s"]
+            leg_distance += d["length"]
 
             seg = edge_latlon_coords(G, u, v, k)
             if full_coords and full_coords[-1] == seg[0]:
                 seg = seg[1:]
             full_coords.extend(seg)
+
+        leg_distances_m.append(round(leg_distance, 1))
 
     path = [LatLon(lat=lat, lon=lon) for lat, lon in full_coords]
 
@@ -141,4 +167,5 @@ def route(req: RouteRequest):
         end_snapped=LatLon(lat=G.nodes[end_node]["y"], lon=G.nodes[end_node]["x"]),
         snap_dist_start_m=round(start_snap_dist, 1),
         snap_dist_end_m=round(end_snap_dist, 1),
+        leg_distances_m=leg_distances_m,
     )

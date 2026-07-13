@@ -46,19 +46,27 @@ export default function ControlPanel({
   setWeights,
   emergency,
   setEmergency,
+  mode,
+  setMode,
   locationMode,
   setLocationMode,
+  running,
+  onRun,
+  onStop,
   routeData,
   routeError,
   routeLoading,
-  blockedCount,
   onClearBlocks,
   destinations,
   onRemoveDestination,
+  obstacles,
+  onRemoveObstacle,
 }) {
   const shown = emergency ? EMERGENCY_PRESET : weights;
   const pct = (v) => Math.round(v);
   const handleWeightChange = (key, v) => setWeights((w) => rebalanceWeights(w, key, v));
+
+  const canRun = !running && destinations.length > 0 && !!routeData;
 
   return (
     <div className="panel">
@@ -66,7 +74,7 @@ export default function ControlPanel({
       <p className="subtitle">Phase 1 — A* over live OpenStreetMap data</p>
 
       <section>
-        <h2>Location</h2>
+        <h2>Location source</h2>
         <div className="toggle-row">
           <button
             className={locationMode === "mock" ? "toggle-btn active" : "toggle-btn"}
@@ -84,9 +92,35 @@ export default function ControlPanel({
             Real location (Phase 2)
           </button>
         </div>
+      </section>
+
+      <section>
+        <h2>Map tool</h2>
+        <div className="toolbar">
+          <button
+            className={mode === "setLocation" ? "tool-btn active" : "tool-btn"}
+            disabled={running}
+            onClick={() => setMode("setLocation")}
+          >
+            📍 Set location
+          </button>
+          <button
+            className={mode === "addDestination" ? "tool-btn active" : "tool-btn"}
+            disabled={running}
+            onClick={() => setMode("addDestination")}
+          >
+            🚩 Add destination
+          </button>
+          <button
+            className={mode === "addObstacle" ? "tool-btn active" : "tool-btn"}
+            onClick={() => setMode("addObstacle")}
+          >
+            ⚠ Add obstacle
+          </button>
+        </div>
         <p className="hint">
-          Drag the blue marker to set your start point. Left-click the map to add a
-          destination. Right-click a road to block/unblock it.
+          Pick a tool, then click the map. The active tool stays selected until you change it.
+          Right-click any road always toggles an obstacle there too.
         </p>
       </section>
 
@@ -128,8 +162,27 @@ export default function ControlPanel({
       </section>
 
       <section>
+        <h2>Drive</h2>
+        {!running ? (
+          <button className="run-btn" onClick={onRun} disabled={!canRun}>
+            ▶ Run
+          </button>
+        ) : (
+          <button className="run-btn stop" onClick={onStop}>
+            ⏹ Stop
+          </button>
+        )}
+        {!canRun && !running && (
+          <p className="hint">Add at least one destination to enable Run.</p>
+        )}
+        {running && (
+          <p className="hint">Driving the route — add an obstacle to force a live reroute.</p>
+        )}
+      </section>
+
+      <section>
         <h2>Destinations</h2>
-        <p className="hint">Left-click the map to add a stop. Click a numbered pin, or its × here, to remove it.</p>
+        <p className="hint">Select "Add destination", then click the map. Click a numbered pin, or its × here, to remove it.</p>
         {destinations.length === 0 && <p className="hint">No destinations yet.</p>}
         {destinations.length > 0 && (
           <ul className="dest-list">
@@ -149,20 +202,32 @@ export default function ControlPanel({
       </section>
 
       <section>
-        <h2>Road closures</h2>
-        <p className="hint">Right-click any road on the map to block or unblock it — the route recalculates automatically.</p>
-        <div className="stat-row">
-          <span>Blocked roads</span>
-          <span>{blockedCount}</span>
-        </div>
-        <button className="secondary-btn" onClick={onClearBlocks} disabled={blockedCount === 0}>
-          Clear all blocks
+        <h2>Obstacles</h2>
+        <p className="hint">Select "Add obstacle", then click a road (or right-click any road directly). The route reroutes automatically — even mid-drive.</p>
+        {obstacles.length === 0 && <p className="hint">No obstacles placed.</p>}
+        {obstacles.length > 0 && (
+          <ul className="dest-list">
+            {obstacles.map((o) => (
+              <li key={o.id} className="dest-row">
+                <span className="obstacle-icon">⚠</span>
+                <span className="dest-coords">
+                  {o.lat.toFixed(5)}, {o.lon.toFixed(5)}
+                </span>
+                <button className="dest-remove" onClick={() => onRemoveObstacle(o.id)} title="Remove">
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button className="secondary-btn" onClick={onClearBlocks} disabled={obstacles.length === 0}>
+          Clear all obstacles
         </button>
       </section>
 
       <section>
         <h2>Route info</h2>
-        {destinations.length === 0 && <p className="hint">Left-click the map to add a destination.</p>}
+        {destinations.length === 0 && <p className="hint">Add a destination to compute a route.</p>}
         {routeLoading && <p className="hint">Calculating route…</p>}
         {routeError && <p className="error">{routeError}</p>}
         {routeData && !routeLoading && (

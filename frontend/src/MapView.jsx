@@ -36,12 +36,23 @@ function numberedIcon(n) {
   });
 }
 
+const obstacleIcon = L.divIcon({
+  className: "",
+  html: `<div style="
+    width:20px;height:20px;display:flex;align-items:center;justify-content:center;
+    background:#f59e0b;color:#1f2430;font:700 12px system-ui;border-radius:4px;
+    transform:rotate(45deg);border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.5);
+  "><span style="transform:rotate(-45deg)">!</span></div>`,
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
+});
+
 const startIcon = pinIcon("#2563eb");
 
-function ClickToAddDestination({ onAddDestination }) {
+function MapClickHandler({ onMapClick }) {
   useMapEvents({
     click(e) {
-      onAddDestination({ lat: e.latlng.lat, lon: e.latlng.lng });
+      onMapClick({ lat: e.latlng.lat, lon: e.latlng.lng });
     },
   });
   return null;
@@ -55,12 +66,15 @@ export default function MapView({
   center,
   mockLocation,
   setMockLocation,
+  running,
   destinations,
-  onAddDestination,
   onRemoveDestination,
+  obstacles,
+  onRemoveObstacle,
+  onMapClick,
   edgesGeoJson,
   blockedSet,
-  onToggleBlock,
+  onRoadRightClick,
   routeCoords,
 }) {
   const geoJsonRef = useRef(null);
@@ -89,7 +103,10 @@ export default function MapView({
     layer.on("contextmenu", (e) => {
       L.DomEvent.stopPropagation(e);
       L.DomEvent.preventDefault(e);
-      onToggleBlock(feature.properties.u, feature.properties.v);
+      onRoadRightClick(feature.properties.u, feature.properties.v, {
+        lat: e.latlng.lat,
+        lon: e.latlng.lng,
+      });
     });
   };
 
@@ -101,7 +118,7 @@ export default function MapView({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <ClickToAddDestination onAddDestination={onAddDestination} />
+      <MapClickHandler onMapClick={onMapClick} />
 
       {edgesGeoJson && (
         <GeoJSON
@@ -123,7 +140,7 @@ export default function MapView({
         <Marker
           position={[mockLocation.lat, mockLocation.lon]}
           icon={startIcon}
-          draggable
+          draggable={!running}
           eventHandlers={{
             dragend: (e) => {
               const { lat, lng } = e.target.getLatLng();
@@ -140,6 +157,17 @@ export default function MapView({
           icon={numberedIcon(i + 1)}
           eventHandlers={{
             click: () => onRemoveDestination(d.id),
+          }}
+        />
+      ))}
+
+      {obstacles.map((o) => (
+        <Marker
+          key={o.id}
+          position={[o.lat, o.lon]}
+          icon={obstacleIcon}
+          eventHandlers={{
+            click: () => onRemoveObstacle(o.id),
           }}
         />
       ))}

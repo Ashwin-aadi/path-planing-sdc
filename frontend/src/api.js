@@ -31,8 +31,20 @@ export function toggleBlock(u, v) {
   }).then(asJson);
 }
 
+export function setBlock(u, v, blocked) {
+  return fetch(`${BASE}/api/blocks/set`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ u, v, blocked }),
+  }).then(asJson);
+}
+
 export function clearBlocks() {
   return fetch(`${BASE}/api/blocks`, { method: "DELETE" }).then(asJson);
+}
+
+export function nearestEdge(lat, lon) {
+  return fetch(`${BASE}/api/graph/nearest_edge?lat=${lat}&lon=${lon}`).then(asJson);
 }
 
 export function computeRoute({ start, waypoints, weights, emergency }) {

@@ -137,6 +137,73 @@
   cursor: not-allowed;
 }
 
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-btn {
+  padding: 9px 10px;
+  font-size: 12.5px;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tool-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.run-btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #16a34a;
+  background: #16a34a;
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.run-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.run-btn.stop {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
+.obstacle-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: #f59e0b;
+  color: #1f2430;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 .dest-list {
   list-style: none;
   margin: 8px 0 0;

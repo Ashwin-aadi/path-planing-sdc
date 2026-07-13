@@ -12,6 +12,15 @@ def toggle(u, v):
     return True
 
 
+def set_blocked(u, v, blocked):
+    key = frozenset((u, v))
+    if blocked:
+        blocked_edges.add(key)
+    else:
+        blocked_edges.discard(key)
+    return blocked
+
+
 def as_list():
     return [tuple(k) for k in blocked_edges]
 

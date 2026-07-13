@@ -3,9 +3,19 @@ import "leaflet/dist/leaflet.css";
 import "./App.css";
 import MapView from "./MapView";
 import ControlPanel from "./ControlPanel";
-import { getBounds, getEdges, toggleBlock, clearBlocks, computeRoute } from "./api";
+import {
+  getBounds, getEdges, setBlock, clearBlocks, computeRoute, nearestEdge,
+} from "./api";
+import { cumulativeDistances, pointAtDistance } from "./geo";
 
 const EMERGENCY_WEIGHTS = { speed: 0, time: 60, safety: 40 };
+const MIN_PLAYBACK_MS = 6000;
+const MAX_PLAYBACK_MS = 30000;
+const PLAYBACK_SPEEDUP = 20; // simulate at ~20x real driving speed
+
+function edgeKey(u, v) {
+  return u < v ? `${u}_${v}` : `${v}_${u}`;
+}
 
 function App() {
   const [center, setCenter] = useState(null);
@@ -13,19 +23,28 @@ function App() {
   const [destinations, setDestinations] = useState([]);
   const nextDestId = useRef(1);
 
+  const [obstacles, setObstacles] = useState([]);
+  const nextObstacleId = useRef(1);
+
   const [edgesGeoJson, setEdgesGeoJson] = useState(null);
   const [blockedSet, setBlockedSet] = useState(new Set());
 
   const [weights, setWeights] = useState({ speed: 33, time: 34, safety: 33 });
   const [emergency, setEmergency] = useState(false);
 
+  const [mode, setMode] = useState("addDestination"); // 'setLocation' | 'addDestination' | 'addObstacle'
   const [locationMode, setLocationMode] = useState("mock");
 
   const [routeData, setRouteData] = useState(null);
   const [routeError, setRouteError] = useState(null);
   const [routeLoading, setRouteLoading] = useState(false);
 
+  const [running, setRunning] = useState(false);
+  const [simPosition, setSimPosition] = useState(null);
+
   const debounceRef = useRef(null);
+  const animFrameRef = useRef(null);
+  const simRef = useRef(null);
 
   useEffect(() => {
     getBounds().then((b) => {
@@ -36,10 +55,7 @@ function App() {
       setEdgesGeoJson(fc);
       const blocked = new Set();
       for (const f of fc.features) {
-        if (f.properties.blocked) {
-          const { u, v } = f.properties;
-          blocked.add(u < v ? `${u}_${v}` : `${v}_${u}`);
-        }
+        if (f.properties.blocked) blocked.add(edgeKey(f.properties.u, f.properties.v));
       }
       setBlockedSet(blocked);
     });
@@ -47,8 +63,11 @@ function App() {
 
   const effectiveWeights = emergency ? EMERGENCY_WEIGHTS : weights;
 
+  // Normal debounced auto-reroute — suspended while a run is animating,
+  // since position updates during a run go through the simulation loop
+  // instead, and mid-run obstacle reroutes are handled explicitly.
   useEffect(() => {
-    if (!mockLocation || destinations.length === 0) return;
+    if (running || !mockLocation || destinations.length === 0) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(async () => {
@@ -72,7 +91,7 @@ function App() {
 
     return () => clearTimeout(debounceRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mockLocation, destinations, weights, emergency, blockedSet]);
+  }, [mockLocation, destinations, weights, emergency, blockedSet, running]);
 
   const handleAddDestination = (latlon) => {
     setDestinations((prev) => [...prev, { ...latlon, id: nextDestId.current++ }]);
@@ -82,23 +101,198 @@ function App() {
     setDestinations((prev) => prev.filter((d) => d.id !== id));
   };
 
-  const handleToggleBlock = async (u, v) => {
-    const res = await toggleBlock(u, v);
-    setBlockedSet((prev) => {
-      const next = new Set(prev);
-      const key = u < v ? `${u}_${v}` : `${v}_${u}`;
-      if (res.blocked) next.add(key);
-      else next.delete(key);
-      return next;
-    });
-  };
-
   const handleClearBlocks = async () => {
     await clearBlocks();
     setBlockedSet(new Set());
+    setObstacles([]);
+  };
+
+  // --- Run simulation -------------------------------------------------
+
+  function playbackDurationFor(etaSeconds) {
+    return Math.max(MIN_PLAYBACK_MS, Math.min(MAX_PLAYBACK_MS, (etaSeconds / PLAYBACK_SPEEDUP) * 1000));
+  }
+
+  function startSimFromRoute(data, destsAtStart, startPoint) {
+    const path = data.path;
+    const cumDist = cumulativeDistances(path);
+    const total = cumDist[cumDist.length - 1];
+
+    const legBoundaries = [];
+    let acc = 0;
+    for (const legDist of data.leg_distances_m) {
+      acc += legDist;
+      legBoundaries.push(acc);
+    }
+
+    simRef.current = {
+      path, cumDist, total, legBoundaries,
+      destinations: destsAtStart,
+      startTime: null,
+      durationMs: playbackDurationFor(data.eta_s),
+    };
+    setRunning(true);
+    setSimPosition(startPoint);
+    animFrameRef.current = requestAnimationFrame(tick);
+  }
+
+  function remainingDestinationsAt(s, targetDist) {
+    let passed = 0;
+    for (const b of s.legBoundaries) {
+      if (targetDist >= b - 1) passed++;
+      else break;
+    }
+    return s.destinations.slice(passed);
+  }
+
+  function tick(now) {
+    const s = simRef.current;
+    if (!s) return;
+    if (s.startTime === null) s.startTime = now;
+    const elapsed = now - s.startTime;
+    const fraction = Math.min(1, elapsed / s.durationMs);
+    const targetDist = fraction * s.total;
+    const pos = pointAtDistance(s.path, s.cumDist, targetDist);
+    setSimPosition(pos);
+
+    if (fraction < 1) {
+      animFrameRef.current = requestAnimationFrame(tick);
+    } else {
+      setMockLocation(pos);
+      setDestinations([]);
+      setSimPosition(null);
+      setRunning(false);
+      simRef.current = null;
+    }
+  }
+
+  const handleRun = () => {
+    if (running || !routeData || destinations.length === 0 || !mockLocation) return;
+    setMode("addObstacle");
+    startSimFromRoute(routeData, destinations, mockLocation);
+  };
+
+  const handleStop = () => {
+    if (!running) return;
+    cancelAnimationFrame(animFrameRef.current);
+    const s = simRef.current;
+    if (s && simPosition) {
+      const elapsed = s.startTime !== null ? performance.now() - s.startTime : 0;
+      const targetDist = Math.min(1, elapsed / s.durationMs) * s.total;
+      setDestinations(remainingDestinationsAt(s, targetDist));
+      setMockLocation(simPosition);
+    }
+    setSimPosition(null);
+    setRunning(false);
+    simRef.current = null;
+  };
+
+  async function rerouteDuringRun() {
+    const s = simRef.current;
+    if (!s || !running) return;
+
+    const elapsed = s.startTime !== null ? performance.now() - s.startTime : 0;
+    const targetDist = Math.min(1, elapsed / s.durationMs) * s.total;
+    const currentPos = pointAtDistance(s.path, s.cumDist, targetDist);
+    const remaining = remainingDestinationsAt(s, targetDist);
+
+    if (remaining.length === 0) return;
+
+    cancelAnimationFrame(animFrameRef.current);
+    setRouteLoading(true);
+    setRouteError(null);
+    try {
+      const data = await computeRoute({
+        start: currentPos,
+        waypoints: remaining.map(({ lat, lon }) => ({ lat, lon })),
+        weights: effectiveWeights,
+        emergency,
+      });
+      setRouteData(data);
+      setDestinations(remaining);
+      startSimFromRoute(data, remaining, currentPos);
+    } catch (err) {
+      setRouteError(err.message);
+      setDestinations(remaining);
+      setMockLocation(currentPos);
+      setSimPosition(null);
+      setRunning(false);
+      simRef.current = null;
+    } finally {
+      setRouteLoading(false);
+    }
+  }
+
+  // --- Obstacles --------------------------------------------------------
+
+  const handlePlaceObstacleAt = async (latlon) => {
+    try {
+      const res = await nearestEdge(latlon.lat, latlon.lon);
+      const { u, v, snapped } = res;
+      const key = edgeKey(u, v);
+      if (blockedSet.has(key)) return;
+
+      await setBlock(u, v, true);
+      setBlockedSet((prev) => new Set(prev).add(key));
+      setObstacles((prev) => [...prev, { id: nextObstacleId.current++, u, v, lat: snapped.lat, lon: snapped.lon }]);
+      if (running) rerouteDuringRun();
+    } catch (err) {
+      setRouteError(err.message);
+    }
+  };
+
+  const handleRemoveObstacle = async (id) => {
+    const obs = obstacles.find((o) => o.id === id);
+    if (!obs) return;
+    setObstacles((prev) => prev.filter((o) => o.id !== id));
+    await setBlock(obs.u, obs.v, false);
+    setBlockedSet((prev) => {
+      const next = new Set(prev);
+      next.delete(edgeKey(obs.u, obs.v));
+      return next;
+    });
+    if (running) rerouteDuringRun();
+  };
+
+  const handleRoadRightClick = async (u, v, latlon) => {
+    const key = edgeKey(u, v);
+    if (blockedSet.has(key)) {
+      const obs = obstacles.find((o) => edgeKey(o.u, o.v) === key);
+      if (obs) {
+        await handleRemoveObstacle(obs.id);
+      } else {
+        await setBlock(u, v, false);
+        setBlockedSet((prev) => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+        if (running) rerouteDuringRun();
+      }
+    } else {
+      await setBlock(u, v, true);
+      setBlockedSet((prev) => new Set(prev).add(key));
+      setObstacles((prev) => [...prev, { id: nextObstacleId.current++, u, v, lat: latlon.lat, lon: latlon.lon }]);
+      if (running) rerouteDuringRun();
+    }
+  };
+
+  // --- Map click dispatch -------------------------------------------------
+
+  const handleMapClick = (latlon) => {
+    if (mode === "setLocation") {
+      if (running) return;
+      setMockLocation(latlon);
+    } else if (mode === "addDestination") {
+      if (running) return;
+      handleAddDestination(latlon);
+    } else if (mode === "addObstacle") {
+      handlePlaceObstacleAt(latlon);
+    }
   };
 
   const routeCoords = useMemo(() => routeData?.path, [routeData]);
+  const displayLocation = running ? simPosition : mockLocation;
 
   return (
     <div className="app">
@@ -107,26 +301,35 @@ function App() {
         setWeights={setWeights}
         emergency={emergency}
         setEmergency={setEmergency}
+        mode={mode}
+        setMode={setMode}
         locationMode={locationMode}
         setLocationMode={setLocationMode}
+        running={running}
+        onRun={handleRun}
+        onStop={handleStop}
         routeData={routeData}
         routeError={routeError}
         routeLoading={routeLoading}
-        blockedCount={blockedSet.size}
         onClearBlocks={handleClearBlocks}
         destinations={destinations}
         onRemoveDestination={handleRemoveDestination}
+        obstacles={obstacles}
+        onRemoveObstacle={handleRemoveObstacle}
       />
       <MapView
         center={center}
-        mockLocation={mockLocation}
+        mockLocation={displayLocation}
         setMockLocation={setMockLocation}
+        running={running}
         destinations={destinations}
-        onAddDestination={handleAddDestination}
         onRemoveDestination={handleRemoveDestination}
+        obstacles={obstacles}
+        onRemoveObstacle={handleRemoveObstacle}
+        onMapClick={handleMapClick}
         edgesGeoJson={edgesGeoJson}
         blockedSet={blockedSet}
-        onToggleBlock={handleToggleBlock}
+        onRoadRightClick={handleRoadRightClick}
         routeCoords={routeCoords}
       />
     </div>

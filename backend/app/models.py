@@ -26,6 +26,12 @@ class BlockRequest(BaseModel):
     v: int
 
 
+class SetBlockRequest(BaseModel):
+    u: int
+    v: int
+    blocked: bool
+
+
 class RouteResponse(BaseModel):
     path: list[LatLon]
     distance_m: float
@@ -37,3 +43,4 @@ class RouteResponse(BaseModel):
     end_snapped: LatLon
     snap_dist_start_m: float
     snap_dist_end_m: float
+    leg_distances_m: list[float]
