@@ -228,8 +228,11 @@ export default function MapView({
 
       {routeCoords && routeCoords.length > 1 && (
         <Polyline
+          // While driving, the still-to-cover track renders charcoal black
+          // (the covered part behind the car is already trimmed off by App);
+          // when planning, the full route shows in dark green.
+          pathOptions={{ color: running ? "#28282b" : "#16a34a", weight: 5, opacity: 0.9 }}
           positions={routeCoords.map((p) => [p.lat, p.lon])}
-          pathOptions={{ color: "#16a34a", weight: 5, opacity: 0.9 }}
         />
       )}
 

@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import config, state
-from app.astar import NoRouteFound, astar_route
+from app.astar import NoRouteFound, bidirectional_astar_route
 from app.graph_loader import (
     dedup_edge_pairs, edge_latlon_coords, edges_in_bbox, get_graph, graph_bounds,
     nearest_edge, nearest_node, nearest_region, region_cache_ready,
@@ -204,7 +204,7 @@ def route(req: RouteRequest):
         leg_start = snapped[leg][0]
         leg_end = snapped[leg + 1][0]
         try:
-            node_path, edge_keys, stats = astar_route(
+            node_path, edge_keys, stats = bidirectional_astar_route(
                 G, leg_start, leg_end, weights, blocked=state.blocked_edges, congestion_factor=cf
             )
         except NoRouteFound:

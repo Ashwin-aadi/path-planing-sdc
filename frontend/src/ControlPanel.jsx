@@ -208,7 +208,7 @@ export default function ControlPanel({
   return (
     <div className="panel">
       <h1>Route Planner</h1>
-      <p className="subtitle">Phase 2 — A* over live OpenStreetMap data, real GPS + orientation</p>
+      <p className="subtitle">Phase 2 — bidirectional A* over live OpenStreetMap data, real GPS + orientation</p>
 
       <section>
         <h2>Region</h2>
@@ -314,7 +314,6 @@ export default function ControlPanel({
           </button>
           <button
             className={mode === "addDestination" ? "tool-btn active" : "tool-btn"}
-            disabled={running}
             onClick={() => setMode("addDestination")}
           >
             🚩 Add destination
@@ -405,7 +404,7 @@ export default function ControlPanel({
           <p className="hint">Add at least one destination to enable Run.</p>
         )}
         {running && (
-          <p className="hint">Driving the route — add an obstacle to force a live reroute.</p>
+          <p className="hint">Driving the route — add destinations or obstacles, or adjust the sliders, and it reroutes live without stopping.</p>
         )}
 
         <div className="speed-row">
@@ -492,7 +491,7 @@ export default function ControlPanel({
               <span>{routeData.compute_ms.toFixed(1)} ms</span>
             </div>
             <div className="stat-row">
-              <span>Nodes expanded (A*)</span>
+              <span>Nodes expanded (bidirectional A*)</span>
               <span>{routeData.nodes_expanded}</span>
             </div>
           </div>

@@ -8,6 +8,7 @@ import {
 } from "./api";
 import {
   cumulativeDistances, pointAtDistance, bearingDeg, computeManeuvers, nextManeuver, projectToPath,
+  remainingPathFrom,
 } from "./geo";
 import { useGeolocation } from "./useGeolocation";
 import { DEFAULT_SPEED } from "./constants";
@@ -99,6 +100,15 @@ function App() {
 
   const handleRegionChange = (newRegion) => {
     if (!newRegion || newRegion === region) return;
+    if (running) {
+      // Switching maps mid-drive: kill the animation before wiping the
+      // route state it feeds on, or the old sim keeps ticking invisibly.
+      cancelAnimationFrame(animFrameRef.current);
+      setSimPosition(null);
+      setSimHeading(null);
+      setRunning(false);
+      simRef.current = null;
+    }
     setDestinations([]);
     setObstacles([]);
     setBlockedSet(new Set());
@@ -197,11 +207,21 @@ function App() {
   }, [currentLocation, destinations, weights, emergency, blockedSet, running, region]);
 
   const handleAddDestination = (latlon) => {
-    setDestinations((prev) => [...prev, { ...latlon, id: nextDestId.current++ }]);
+    const dest = { ...latlon, id: nextDestId.current++ };
+    if (running && simRef.current) {
+      // Mid-drive: append to the not-yet-reached stops and reroute live.
+      rerouteDuringRun((remaining) => [...remaining, dest]);
+    } else {
+      setDestinations((prev) => [...prev, dest]);
+    }
   };
 
   const handleRemoveDestination = (id) => {
-    setDestinations((prev) => prev.filter((d) => d.id !== id));
+    if (running && simRef.current) {
+      rerouteDuringRun((remaining) => remaining.filter((d) => d.id !== id));
+    } else {
+      setDestinations((prev) => prev.filter((d) => d.id !== id));
+    }
   };
 
   const handleClearBlocks = async () => {
@@ -281,6 +301,8 @@ function App() {
     } else {
       setCurrentLocation(pos);
       setDestinations([]);
+      setRouteData(null); // arrived — the finished track disappears
+      setRouteError(null);
       setSimPosition(null);
       setSimHeading(null);
       setRunning(false);
@@ -311,7 +333,11 @@ function App() {
     simRef.current = null;
   };
 
-  async function rerouteDuringRun() {
+  // Recompute the route from wherever the car currently is, mid-drive.
+  // `transformRemaining` lets callers edit the not-yet-reached stop list in
+  // the same breath (add a destination, remove one) so the reroute and the
+  // list change can't race each other.
+  async function rerouteDuringRun(transformRemaining) {
     const s = simRef.current;
     if (!s || !running) return;
 
@@ -319,9 +345,23 @@ function App() {
     const elapsed = s.startTime !== null ? performance.now() - s.startTime : 0;
     const targetDist = Math.min(1, elapsed / s.durationMs) * s.total;
     const currentPos = pointAtDistance(s.path, s.cumDist, targetDist);
-    const remaining = remainingDestinationsAt(s, targetDist);
+    let remaining = remainingDestinationsAt(s, targetDist);
+    if (transformRemaining) remaining = transformRemaining(remaining);
 
-    if (remaining.length === 0) return;
+    if (remaining.length === 0) {
+      // Nothing left to drive to (last stop removed mid-run, or we're at
+      // the end) — finish the run where the car is and drop the track.
+      cancelAnimationFrame(animFrameRef.current);
+      setDestinations([]);
+      setRouteData(null);
+      setRouteError(null);
+      setCurrentLocation(currentPos);
+      setSimPosition(null);
+      setSimHeading(null);
+      setRunning(false);
+      simRef.current = null;
+      return;
+    }
 
     cancelAnimationFrame(animFrameRef.current);
     setRouteLoading(true);
@@ -351,6 +391,16 @@ function App() {
       if (rerouteSeqRef.current === mySeq) setRouteLoading(false);
     }
   }
+
+  // Slider / emergency-mode changes mid-drive reroute the remaining legs
+  // live — the car keeps going from wherever it is, no stop/re-run needed.
+  // (The non-running case is covered by the normal debounced effect above.)
+  useEffect(() => {
+    if (!running) return;
+    const t = setTimeout(() => rerouteDuringRun(), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weights, emergency]);
 
   // --- Obstacles --------------------------------------------------------
 
@@ -413,8 +463,7 @@ function App() {
       if (running || locationMode !== "mock") return;
       setCurrentLocation(latlon);
     } else if (mode === "addDestination") {
-      if (running) return;
-      handleAddDestination(latlon);
+      handleAddDestination(latlon); // works mid-drive too: reroutes live
     } else if (mode === "addObstacle") {
       handlePlaceObstacleAt(latlon);
     }
@@ -435,6 +484,16 @@ function App() {
 
   const routeCoords = useMemo(() => routeData?.path, [routeData]);
   const displayLocation = running ? simPosition : currentLocation;
+
+  // While driving, only the not-yet-covered remainder of the route is drawn
+  // — the part behind the car disappears as it's covered (MapView also
+  // switches the line from dark green to charcoal black during a run).
+  const displayedRouteCoords = useMemo(() => {
+    if (!running || !routeCoords || routeCoords.length < 2 || !simPosition) return routeCoords;
+    const cumDist = cumulativeDistances(routeCoords);
+    const { along } = projectToPath(routeCoords, cumDist, simPosition);
+    return remainingPathFrom(routeCoords, cumDist, along);
+  }, [running, routeCoords, simPosition]);
 
   // --- Orientation & direction assistance --------------------------------
 
@@ -528,7 +587,7 @@ function App() {
         edgesKey={edgesKey}
         blockedSet={blockedSet}
         onRoadRightClick={handleRoadRightClick}
-        routeCoords={routeCoords}
+        routeCoords={displayedRouteCoords}
       />
     </div>
   );

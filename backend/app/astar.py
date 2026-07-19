@@ -1,8 +1,18 @@
-"""Custom weighted A* over the cached OSM graph.
+"""Bidirectional weighted A* over the cached OSM graph.
 
-f(n) = g(n) + h(n), where g(n) is the accumulated blended cost (time / speed /
-safety, per user slider weights) and h(n) is an admissible haversine-based
-lower bound (see graph_loader.FLOOR_FRACTION for why it stays admissible).
+Two searches run simultaneously — forward from the start over normal edges,
+backward from the goal over reversed edges — and meet in the middle,
+expanding roughly half the nodes plain A* would on city-scale graphs.
+
+Both are guided by the balanced (Ikeda et al.) potential
+
+    pf(n) = (h_f(n) - h_b(n)) / 2        pb(n) = -pf(n)
+
+where h_f/h_b are the admissible haversine lower bounds to the goal/start
+(see graph_loader.FLOOR_FRACTION for why they stay admissible and
+consistent). Because pf + pb is constant, both searches' reweighted edge
+costs stay non-negative and the classic termination rule applies: once
+top_f + top_b >= mu (the best start-goal path found so far), mu is optimal.
 """
 
 import heapq
@@ -43,7 +53,7 @@ def _best_parallel_edge_cost(G, u, v, weights, blocked, congestion_factor):
     return best_key, best_cost
 
 
-def astar_route(G, start, goal, weights, blocked=None, congestion_factor=0.0):
+def bidirectional_astar_route(G, start, goal, weights, blocked=None, congestion_factor=0.0):
     """weights: dict with 'time', 'speed', 'safety', 'traffic', 'economy'
     keys summing to 1. blocked: set of frozenset({u, v}) pairs to treat as
     impassable. congestion_factor: current time-of-day traffic scalar in
@@ -52,57 +62,112 @@ def astar_route(G, start, goal, weights, blocked=None, congestion_factor=0.0):
     Returns (node_path, edge_keys, stats) or raises NoRouteFound."""
     t0 = time.perf_counter()
 
-    goal_lat, goal_lon = G.nodes[goal]["y"], G.nodes[goal]["x"]
+    if start == goal:
+        return [start], [], {"compute_ms": 0.0, "nodes_expanded": 0, "cost": 0.0}
 
-    def h(n):
+    s_lat, s_lon = G.nodes[start]["y"], G.nodes[start]["x"]
+    g_lat, g_lon = G.nodes[goal]["y"], G.nodes[goal]["x"]
+    h_scale = FLOOR_FRACTION / REF_SPEED_MPS
+
+    def pf(n):
         d = G.nodes[n]
-        dist = haversine_m(d["y"], d["x"], goal_lat, goal_lon)
-        return FLOOR_FRACTION * dist / REF_SPEED_MPS
+        h_fwd = haversine_m(d["y"], d["x"], g_lat, g_lon)   # lower bound to goal
+        h_bwd = haversine_m(d["y"], d["x"], s_lat, s_lon)   # lower bound to start
+        return h_scale * (h_fwd - h_bwd) / 2.0
 
-    g_score = {start: 0.0}
-    came_from = {}
-    open_heap = [(h(start), start)]
-    visited = set()
+    inf = float("inf")
+    g_f = {start: 0.0}
+    g_b = {goal: 0.0}
+    came_f = {}  # node -> (prev_node, edge_key), walking back toward start
+    came_b = {}  # node -> (next_node, edge_key), walking forward toward goal
+    open_f = [(pf(start), start)]
+    open_b = [(-pf(goal), goal)]
+    closed_f = set()
+    closed_b = set()
     expanded = 0
 
-    while open_heap:
-        _, u = heapq.heappop(open_heap)
-        if u in visited:
-            continue
-        visited.add(u)
-        expanded += 1
+    mu = inf      # best complete start->goal cost discovered so far
+    meet = None   # node where the two searches join on that best path
 
-        if u == goal:
+    def try_meet(n):
+        # Called on every g improvement from either side, so mu always
+        # equals the best sum over nodes both searches have priced.
+        nonlocal mu, meet
+        gf, gb = g_f.get(n), g_b.get(n)
+        if gf is not None and gb is not None and gf + gb < mu:
+            mu = gf + gb
+            meet = n
+
+    while open_f or open_b:
+        top_f = open_f[0][0] if open_f else inf
+        top_b = open_b[0][0] if open_b else inf
+        if mu <= top_f + top_b:
             break
 
-        for v in G[u]:
-            if v in visited:
+        if top_f <= top_b:
+            _, u = heapq.heappop(open_f)
+            if u in closed_f:
                 continue
-            key, cost = _best_parallel_edge_cost(G, u, v, weights, blocked, congestion_factor)
-            if cost is None:
+            closed_f.add(u)
+            expanded += 1
+            for v in G[u]:
+                if v in closed_f:
+                    continue
+                key, cost = _best_parallel_edge_cost(G, u, v, weights, blocked, congestion_factor)
+                if cost is None:
+                    continue
+                tentative = g_f[u] + cost
+                if tentative < g_f.get(v, inf):
+                    g_f[v] = tentative
+                    came_f[v] = (u, key)
+                    heapq.heappush(open_f, (tentative + pf(v), v))
+                    try_meet(v)
+        else:
+            _, u = heapq.heappop(open_b)
+            if u in closed_b:
                 continue
-            tentative = g_score[u] + cost
-            if tentative < g_score.get(v, float("inf")):
-                g_score[v] = tentative
-                came_from[v] = (u, key)
-                heapq.heappush(open_heap, (tentative + h(v), v))
+            closed_b.add(u)
+            expanded += 1
+            # Backward search relaxes the graph's reversed edges: for each
+            # real edge p -> u, extend the (u ... goal) suffix to p.
+            for p in G.pred[u]:
+                if p in closed_b:
+                    continue
+                key, cost = _best_parallel_edge_cost(G, p, u, weights, blocked, congestion_factor)
+                if cost is None:
+                    continue
+                tentative = g_b[u] + cost
+                if tentative < g_b.get(p, inf):
+                    g_b[p] = tentative
+                    came_b[p] = (u, key)
+                    heapq.heappush(open_b, (tentative - pf(p), p))
+                    try_meet(p)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
-    if goal not in came_from and goal != start:
+    if meet is None:
         raise NoRouteFound(f"No path between {start} and {goal}")
 
-    node_path = [goal]
+    # Stitch the two half-paths together at the meeting node.
+    node_path = [meet]
     edge_keys = []
-    while node_path[-1] != start:
-        u, key = came_from[node_path[-1]]
-        edge_keys.append(key)
+    n = meet
+    while n != start:
+        u, key = came_f[n]
         node_path.append(u)
+        edge_keys.append(key)
+        n = u
     node_path.reverse()
     edge_keys.reverse()
+    n = meet
+    while n != goal:
+        nxt, key = came_b[n]
+        node_path.append(nxt)
+        edge_keys.append(key)
+        n = nxt
 
     return node_path, edge_keys, {
         "compute_ms": round(elapsed_ms, 2),
         "nodes_expanded": expanded,
-        "cost": g_score.get(goal, 0.0),
+        "cost": mu,
     }

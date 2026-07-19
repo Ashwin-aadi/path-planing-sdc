@@ -122,6 +122,18 @@ export function projectToPath(path, cumDist, pt) {
   return { along: bestAlong, offDist: bestDist };
 }
 
+/** Path points from `along` meters onward, starting with the interpolated
+ * split point — the not-yet-driven remainder of the route, so the covered
+ * part behind the vehicle can disappear while driving. */
+export function remainingPathFrom(path, cumDist, along) {
+  const total = cumDist[cumDist.length - 1];
+  const d = Math.max(0, Math.min(total, along));
+  const pt = pointAtDistance(path, cumDist, d);
+  let i = 1;
+  while (i < cumDist.length && cumDist[i] < d) i++;
+  return [pt, ...path.slice(i)];
+}
+
 /** Interpolated {lat, lon} at `targetDist` meters along path, given its cumDist array. */
 export function pointAtDistance(path, cumDist, targetDist) {
   const total = cumDist[cumDist.length - 1];
